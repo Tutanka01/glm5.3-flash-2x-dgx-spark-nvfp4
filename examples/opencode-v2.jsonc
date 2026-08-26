@@ -1,0 +1,29 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "local-glm53/glm53",
+  "providers": {
+    "local-glm53": {
+      "name": "GLM-5.3-Flash NVFP4 (2x GB10)",
+      "package": "@opencode-ai/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://10.10.10.1:8888/v1",
+        "apiKey": "{env:GLM53_API_KEY}"
+      },
+      "models": {
+        "glm53": {
+          "modelID": "glm-5.3-flash-nvfp4",
+          "name": "GLM-5.3-Flash NVFP4",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{"name":"sanity","messages":[{"role":"user","content":"Reply with exactly BENCH_OK."}],"max_tokens":64}
+{"name":"coding","messages":[{"role":"user","content":"Write a correct Python function merge_intervals(intervals) that merges overlapping closed integer intervals. Return only one fenced code block."}],"max_tokens":1024}
+{"name":"reasoning","messages":[{"role":"user","content":"A service has p99 latency 800 ms. Three independent changes reduce it by 20%, 15%, and 10% multiplicatively. Compute the final latency and explain briefly."}],"max_tokens":512}
+

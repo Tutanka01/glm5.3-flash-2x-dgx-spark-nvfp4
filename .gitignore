@@ -1,0 +1,9 @@
+.env.glm53
+.glm53-guard-*.pid
+.glm53-guard-*.log
+*.log
+__pycache__/
+.pytest_cache/
+results/*.json
+results/*.jsonl
+

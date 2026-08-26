@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${GLM53_MOCK_STATE:?}"
+ALL_ARGS=" $* "
+case "$ALL_ARGS" in
+  *" compose version "*) printf 'Docker Compose mock\n' ;;
+  *" compose "*" config "*) ;;
+  *" image inspect "*) ;;
+  *" inspect -f "*) printf 'true\n' ;;
+  *" compose "*" ps -q "*)
+    [ -f "$STATE_DIR/head" ] && printf 'head-container\n'
+    ;;
+  *" compose "*" up -d "*) touch "$STATE_DIR/head" ;;
+  *" compose "*" stop "*|*" compose "*" down "*) rm -f "$STATE_DIR/head" ;;
+  *" compose "*" logs "*) printf 'mock head logs\n' ;;
+  *" run "*) ;;
+  *" pull "*) ;;
+  *) ;;
+esac
+

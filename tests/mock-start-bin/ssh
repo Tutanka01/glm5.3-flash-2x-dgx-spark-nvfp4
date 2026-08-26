@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${GLM53_MOCK_STATE:?}"
+ALL_ARGS=" $* "
+case "$ALL_ARGS" in
+  *"ps\\ --status\\ running\\ -q"*)
+    [ -f "$STATE_DIR/worker" ] && printf 'worker-container\n'
+    ;;
+  *"up\\ -d\\ --no-build\\ --force-recreate"*) touch "$STATE_DIR/worker" ;;
+  *"stop\\ vllm-glm53"*|*"down\\ --remove-orphans"*) rm -f "$STATE_DIR/worker" ;;
+  *"logs\\ --no-color"*) printf 'mock worker logs\n' ;;
+  *) ;;
+esac
+

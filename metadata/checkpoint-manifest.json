@@ -1,0 +1,58 @@
+{
+  "verified_at": "2026-08-26T21:11:30+02:00",
+  "model": {
+    "id": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
+    "revision": "11d73216cd636238e82e1d77fe1042ffab36e7fa",
+    "architecture": "Glm5NextForConditionalGeneration",
+    "model_type": "glm5_next",
+    "max_position_embeddings": 1048576
+  },
+  "source": {
+    "id": "zai-org/GLM-5.3-Flash-BF16",
+    "revision": "b1967181a3917ae70a437f4884748f6b8e3a1f4d"
+  },
+  "official_distribution": {
+    "id": "zai-org/GLM-5.3-Flash",
+    "revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a"
+  },
+  "template_update": {
+    "official_bf16_revision": "b1967181a3917ae70a437f4884748f6b8e3a1f4d",
+    "official_bf16_date": "2026-08-26T16:30:51Z",
+    "quant_sync_revision": "11d73216cd636238e82e1d77fe1042ffab36e7fa",
+    "quant_sync_date": "2026-08-26T18:07:05Z",
+    "quant_sync_title": "Sync chat_template.jinja with upstream (2026-08-26 16:31Z): fixes multimodal image/video/audio token emission",
+    "sha256": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891"
+  },
+  "quantization": {
+    "quant_method": "modelopt",
+    "quant_algo": "NVFP4",
+    "producer_name": "modelopt",
+    "producer_version": "0.45.0",
+    "num_bits": 4,
+    "type": "float",
+    "group_size": 16,
+    "ignore_count": 32
+  },
+  "index": {
+    "tensor_payload_bytes": 194644803576,
+    "tensor_entries": 113074,
+    "shards": 120,
+    "expert_weights": 37152,
+    "expert_weight_scales": 37152,
+    "expert_weight_scales_2": 37152,
+    "non_expert_entries": 1618
+  },
+  "files": {
+    "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+    "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+    "chat_template.jinja": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891",
+    "generation_config.json": "230c30609ecbbb9e6583bedde8e7bdda0c6eb8fe5fad0eaeb3d1b293d751cb4f",
+    "processor_config.json": "aae38374c94b08cc9b0547c6e64f05b951bd9735cea571c6988f5ed552bed3ed"
+  },
+  "runtime": {
+    "image_tag": "vllm/vllm-openai:glm53-flash-arm64-cu130",
+    "image_digest": "sha256:905c02933be6021301db2dc284e24e3727467aa3a0f63b41d609885778a07bce",
+    "vllm_support_pr": 53906,
+    "vllm_support_pr_head": "933876c388fb129ad82590660e6506614559cb86"
+  }
+}
