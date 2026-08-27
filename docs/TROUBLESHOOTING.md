@@ -70,6 +70,10 @@ Relancez `./doctor-glm53.sh` jusqu'à ce que les deux routes, les HCA et les GID
 
 Arrêtez-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actifs. Exécutez `./prepare-glm53.sh` jusqu'à validation des 120 shards sur les deux nœuds.
 
+## Le modèle répond mais `start-glm53.sh` affiche encore `Still loading`
+
+Les anciennes versions utilisaient `/health` pour le garde mémoire et le healthcheck Docker. Sur ce runtime, cet endpoint peut déclencher une passe synthétique de 64 tokens ; avec une seule requête active, les sondes répétées pouvaient retarder `/v1/models` indéfiniment. La recette utilise désormais uniquement `/v1/models`, avec un délai de 30 secondes, et vérifie que l'identifiant servi est exactement celui attendu.
+
 ## `Permission denied` dans `/cache/huggingface`
 
 Le chemin `/cache/huggingface` est le cache hôte monté dans le conteneur. Si un ancien conteneur lancé en root a créé le dossier du modèle, rendez uniquement ce dossier et son dossier de verrous au compte qui exécute la recette :

@@ -51,7 +51,7 @@ payload={
         {"role": "user", "content": "Reply with exactly GLM53_OK and nothing else."},
     ],
     "temperature": 0,
-    "max_tokens": 64,
+    "chat_template_kwargs": {"reasoning_effort": "low"},
 }
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"))
 PY
@@ -104,7 +104,7 @@ payload={
     }],
     "tool_choice": "auto",
     "temperature": 0,
-    "max_tokens": 256,
+    "chat_template_kwargs": {"reasoning_effort": "low"},
 }
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"))
 PY

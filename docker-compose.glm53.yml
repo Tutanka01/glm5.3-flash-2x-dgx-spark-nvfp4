@@ -98,11 +98,16 @@ services:
         - >-
           if [ "$$HEADLESS" = "1" ]; then
             kill -0 1;
+          elif [ -n "$$API_KEY" ]; then
+            curl -fsS --connect-timeout 2 --max-time 10
+            -H "Authorization: Bearer $$API_KEY"
+            "http://127.0.0.1:$${API_PORT}/v1/models" >/dev/null;
           else
-            curl -fsS "http://127.0.0.1:$${API_PORT}/health" >/dev/null;
+            curl -fsS --connect-timeout 2 --max-time 10
+            "http://127.0.0.1:$${API_PORT}/v1/models" >/dev/null;
           fi
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
       start_period: ${HEALTH_START_PERIOD:-3600s}
 

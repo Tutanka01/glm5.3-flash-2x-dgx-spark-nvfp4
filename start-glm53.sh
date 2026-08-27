@@ -68,6 +68,19 @@ START_TIME="$(date +%s)"
 NEXT_PROGRESS=0
 glm53_info "Waiting up to ${WAIT_TIMEOUT}s for http://127.0.0.1:${API_PORT}/v1/models"
 
+api_reports_expected_model() {
+  local response
+  response="$(GLM53_CURL_MAX_TIME=30 glm53_api_curl \
+    "http://127.0.0.1:${API_PORT}/v1/models" 2>/dev/null)" || return 1
+  python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+expected = sys.argv[1]
+ids = [item.get("id") for item in payload.get("data", [])]
+raise SystemExit(0 if expected in ids else 1)
+' "$SERVED_MODEL_NAME" <<< "$response" >/dev/null 2>&1
+}
+
 while :; do
   NOW="$(date +%s)"
   ELAPSED=$((NOW - START_TIME))
@@ -82,7 +95,7 @@ while :; do
     glm53_die "Worker container exited before readiness"
   fi
 
-  if GLM53_CURL_MAX_TIME=5 glm53_api_curl "http://127.0.0.1:${API_PORT}/v1/models" >/dev/null 2>&1; then
+  if api_reports_expected_model; then
     READY=1
     break
   fi

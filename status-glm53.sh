@@ -29,7 +29,7 @@ fi
 printf '\n===== API =====\n'
 STATUS_TMP="$(mktemp /tmp/glm53-status.XXXXXX)"
 trap 'rm -f "$STATUS_TMP"' EXIT
-if GLM53_CURL_MAX_TIME=10 glm53_api_curl "http://127.0.0.1:${API_PORT}/v1/models" > "$STATUS_TMP" 2>/dev/null; then
+if GLM53_CURL_MAX_TIME=30 glm53_api_curl "http://127.0.0.1:${API_PORT}/v1/models" > "$STATUS_TMP" 2>/dev/null; then
   python3 - "$STATUS_TMP" <<'PY'
 import json, sys
 payload=json.load(open(sys.argv[1], encoding="utf-8"))
