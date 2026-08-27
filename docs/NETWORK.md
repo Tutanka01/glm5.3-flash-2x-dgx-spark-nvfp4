@@ -36,13 +36,13 @@ ip -4 route get <WORKER_FABRIC_IP>
 ip -4 route get <HEAD_FABRIC_IP>
 ```
 
-La sortie doit contenir exactement l'interface configurée et l'IP locale attendue. Exemple :
+Dans une configuration simple, la sortie contient l'interface configurée et l'IP locale attendue. Exemple :
 
 ```text
 192.168.100.11 dev enp1s0f0np0 src 192.168.100.10
 ```
 
-Si la commande renvoie une autre interface ou une autre source — par exemple une IP `.14` alors que `.10` est configurée — corrigez `.env.glm53` avant le démarrage. Deux interfaces placées dans le même sous-réseau peuvent créer ce type de route ambiguë.
+Deux interfaces placées dans le même sous-réseau peuvent toutefois rendre cette route non contrainte ambiguë. Si une recette TP=2 déjà validée lie explicitement NCCL/Gloo/TP à `.10/.11` sur `enp1s0f0np0`, conservez ces valeurs : le doctor affiche alors un avertissement et la route liée à la source, sans bloquer le démarrage. Définissez `STRICT_FABRIC_ROUTE=1` uniquement si vous voulez imposer la correspondance de la route Linux par défaut.
 
 ## GID RoCE
 
@@ -77,8 +77,9 @@ done
 `./doctor-glm53.sh` automatise ces contrôles. Il échoue si :
 
 - l'IP n'est pas affectée à l'interface Gloo ;
-- la route vers le pair utilise une autre interface ou une autre source ;
 - le HCA configuré n'existe pas ;
 - aucun GID RoCE v2 rempli n'est associé à l'interface sélectionnée.
+
+Une route Linux non contrainte utilisant un autre lien est un avertissement par défaut, car le runtime lie explicitement NCCL, Gloo et TP aux interfaces configurées. Elle devient bloquante avec `STRICT_FABRIC_ROUTE=1`.
 
 Référence : [guide de dépannage réseau NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting/networking_troubleshooting.html).

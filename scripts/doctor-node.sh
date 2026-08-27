@@ -102,6 +102,10 @@ fi
 
 if mkdir -p "$NODE_CACHE" 2>/dev/null && [ -w "$NODE_CACHE" ]; then
   pass "cache is writable: $NODE_CACHE"
+  MODEL_CACHE_DIR="$NODE_CACHE/hub/models--${MODEL_ID//\//--}"
+  if [ -e "$MODEL_CACHE_DIR" ] && [ ! -w "$MODEL_CACHE_DIR" ]; then
+    fail "model cache is not writable by uid=$(id -u): $MODEL_CACHE_DIR (repair its ownership before prepare)"
+  fi
   SNAPSHOT_DIR="$NODE_CACHE/hub/models--${MODEL_ID//\//--}/snapshots/$MODEL_REVISION"
   if [ -d "$SNAPSHOT_DIR" ]; then
     pass "pinned snapshot directory exists"
@@ -139,7 +143,17 @@ if command -v ip >/dev/null 2>&1; then
   if [ "$ROUTE_DEV" = "$NODE_GLOO_IF" ] && [ "$ROUTE_SRC" = "$NODE_IP" ]; then
     pass "route to $PEER_IP uses $ROUTE_DEV with source $ROUTE_SRC"
   else
-    fail "route to $PEER_IP is '$ROUTE_LINE'; expected dev $NODE_GLOO_IF src $NODE_IP"
+    BOUND_ROUTE_LINE="$(ip -4 route get "$PEER_IP" from "$NODE_IP" oif "$NODE_GLOO_IF" 2>/dev/null | head -n 1)"
+    if [ "${STRICT_FABRIC_ROUTE:-0}" = "1" ]; then
+      fail "default route to $PEER_IP is '$ROUTE_LINE'; expected dev $NODE_GLOO_IF src $NODE_IP"
+    else
+      warn "default route to $PEER_IP uses $ROUTE_DEV src $ROUTE_SRC; the runtime explicitly binds $NODE_GLOO_IF/$NODE_IP"
+      if [ -n "$BOUND_ROUTE_LINE" ]; then
+        printf '  [INFO] bound fabric route: %s\n' "$BOUND_ROUTE_LINE"
+      else
+        warn "could not resolve a source-bound route to $PEER_IP via $NODE_GLOO_IF"
+      fi
+    fi
   fi
 else
   fail "ip command not found"

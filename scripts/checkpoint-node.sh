@@ -38,8 +38,12 @@ mkdir -p \
   "$NODE_CACHE/cuda-cache"
 
 if [ "$MODE" = "download" ]; then
-  glm53_info "Pulling pinned runtime image on $ROLE: $GLM53_RUNTIME_IMAGE"
-  docker pull "$GLM53_RUNTIME_IMAGE"
+  if docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1; then
+    glm53_info "Pinned runtime image is already local on $ROLE; skipping registry pull"
+  else
+    glm53_info "Pulling pinned runtime image on $ROLE: $GLM53_RUNTIME_IMAGE"
+    docker pull "$GLM53_RUNTIME_IMAGE"
+  fi
 else
   docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1 || \
     glm53_die "Pinned image is not local on $ROLE. Run ./prepare-glm53.sh first."

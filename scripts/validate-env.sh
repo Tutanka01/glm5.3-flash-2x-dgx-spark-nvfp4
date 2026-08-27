@@ -105,7 +105,7 @@ esac
 
 for switch_value in \
   "${OOM_GUARD:-1}" "${START_SMOKE:-1}" "${REQUIRE_SWAP_OFF:-0}" \
-  "${ALLOW_UNSUPPORTED_PLATFORM:-0}"; do
+  "${ALLOW_UNSUPPORTED_PLATFORM:-0}" "${STRICT_FABRIC_ROUTE:-0}"; do
   case "$switch_value" in 0|1) ;; *) glm53_die "Boolean recipe switches must be 0 or 1" ;; esac
 done
 

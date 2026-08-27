@@ -26,7 +26,7 @@ Une erreur telle que :
 expected dev enp1s0f0np0 src 192.168.100.10
 ```
 
-signifie que Linux rejoint le pair par une autre interface ou une autre IP source. Mettez `HEAD_FABRIC_IP`, `WORKER_FABRIC_IP`, les interfaces et les HCA en accord avec la route réelle. Consultez [NETWORK.md](NETWORK.md).
+signifie que Linux choisirait une autre interface ou une autre IP source pour une socket non liée. Sur un fabric Spark à deux liens déjà validé, NCCL/Gloo/TP peuvent néanmoins utiliser correctement `.10/.11` grâce à leur liaison explicite à `enp1s0f0np0`. La recette avertit sans bloquer lorsque `STRICT_FABRIC_ROUTE=0`. Consultez [NETWORK.md](NETWORK.md).
 
 ## GID vide ou `tr: erreur de lecture: Argument invalide`
 
@@ -69,6 +69,22 @@ Relancez `./doctor-glm53.sh` jusqu'à ce que les deux routes, les HCA et les GID
 ## Le serveur tente de télécharger pendant le boot
 
 Arrêtez-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actifs. Exécutez `./prepare-glm53.sh` jusqu'à validation des 120 shards sur les deux nœuds.
+
+## `Permission denied` dans `/cache/huggingface`
+
+Le chemin `/cache/huggingface` est le cache hôte monté dans le conteneur. Si un ancien conteneur lancé en root a créé le dossier du modèle, rendez uniquement ce dossier et son dossier de verrous au compte qui exécute la recette :
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" \
+  "$HOME/.cache/huggingface/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4" \
+  "$HOME/.cache/huggingface/hub/.locks/models--LibertAIDAI--GLM-5.3-Flash-NVFP4"
+```
+
+Un dossier de verrous absent est sans gravité. Ne supprimez pas le cache : les blobs déjà présents sont réutilisables.
+
+## Proxy GHCR sur le worker
+
+`prepare` réutilise maintenant l'image auditée lorsque sa référence exacte par digest est déjà locale et ne contacte alors pas le registre. Si seul le head peut tirer l'image, transférez-la avec `docker save | ssh docker load`, puis vérifiez la référence exacte avec `docker image inspect`. Une image tirée uniquement par digest peut apparaître `<untagged>` dans `docker image ls` sans être absente.
 
 ## Checkpoint ou config rejeté
 
