@@ -1,64 +1,109 @@
-# Troubleshooting
+# Dépannage
 
-Commence toujours par conserver les logs des deux rangs :
+Commencez toujours par conserver les logs des deux rangs :
 
 ```bash
 ./logs-glm53.sh --profile 32k --node both --tail 500
 ```
 
-## `glm5_next` inconnu ou architecture non supportée
+## Ancienne image vLLM ou ancien fichier `.env.glm53`
 
-Le mauvais conteneur est utilisé. La recipe exige l'image dédiée ARM64/CUDA 13 et son digest audité. Exécute `./prepare-glm53.sh`; ne remplace pas l'image par `latest`.
-
-## `cudaErrorNoKernelImageForDevice` / erreur FP4 MoE sur `sm_121`
-
-Tu as probablement lancé `32k-native`. Arrête les deux rangs puis reviens au fallback connu :
+La recette utilise désormais le runtime SGLang SM121 audité. Si la validation mentionne `GLM53_VLLM_IMAGE`, `11d7321…` ou l'image `vllm/vllm-openai:glm53-flash-arm64-cu130`, recréez votre configuration à partir du nouvel exemple et recopiez uniquement vos valeurs cluster :
 
 ```bash
-./stop-glm53.sh --profile 32k-native
-./start-glm53.sh 32k
+cp .env.glm53 .env.glm53.before-sglang
+cp .env.glm53.example .env.glm53
+$EDITOR .env.glm53
 ```
 
-Le profil `32k` force `--moe-backend marlin --enforce-eager`.
+Ne recopiez pas les anciens pins de modèle ou de runtime.
+
+## Route fabric incorrecte
+
+Une erreur telle que :
+
+```text
+expected dev enp1s0f0np0 src 192.168.100.10
+```
+
+signifie que Linux rejoint le pair par une autre interface ou une autre IP source. Mettez `HEAD_FABRIC_IP`, `WORKER_FABRIC_IP`, les interfaces et les HCA en accord avec la route réelle. Consultez [NETWORK.md](NETWORK.md).
+
+## GID vide ou `tr: erreur de lecture: Argument invalide`
+
+Une ancienne version de la recette lisait un index GID fixe. Supprimez ces variables de `.env.glm53` :
+
+```text
+NCCL_IB_GID_INDEX
+WORKER_NCCL_IB_GID_INDEX
+```
+
+Le runtime utilise NCCL ≥ 2.21 et sélectionne automatiquement le GID RoCE v2. Renseignez plutôt `NCCL_IB_ADDR_RANGE`.
 
 ## Code 137, garde mémoire déclenché ou nœud presque figé
 
-- arrête les autres modèles/containers sur les deux machines ;
-- vérifie que `mem_limit` et `memswap_limit` valent 112g dans le rendu Compose ;
-- désactive le swap pendant le bring-up si possible ;
-- garde `32k`, `MAX_NUM_SEQS=1`, eager et sans MTP ;
-- inspecte `.glm53-guard-head.log` et le fichier équivalent worker ;
-- si nécessaire, baisse `GPU_MEMORY_UTILIZATION` par pas de 0,01, sans descendre trop bas : vLLM doit encore réserver un pool KV non nul.
+- arrêtez les autres modèles et conteneurs sur les deux machines ;
+- désactivez le swap pendant la mise en service si possible ;
+- restez sur `32k`, une requête et sans MTP ;
+- inspectez `.glm53-guard-head.log` et le fichier worker équivalent ;
+- baissez `MEM_FRACTION_STATIC` par pas de `0.01` si nécessaire ;
+- utilisez `32k-eager` pour exclure la capture CUDA graphs.
 
-Le garde arrête uniquement le container portant les labels Compose exacts de cette recipe.
+Le garde arrête uniquement le conteneur portant les labels Compose exacts de cette recette.
 
-## `No available memory for the cache blocks`
+## Mémoire KV insuffisante
 
-Le modèle et le runtime consomment déjà le budget ciblé. Libère de la mémoire système. Si le nœud est propre, augmente avec prudence `GPU_MEMORY_UTILIZATION` jusqu'à 0,90 ; le cap container 112g reste la dernière barrière.
+SGLang réserve les poids et le cache KV dans `MEM_FRACTION_STATIC`. Libérez d'abord la mémoire système, puis augmentez prudemment cette valeur sans dépasser `0.90`. Le cap conteneur de 112g reste une barrière supplémentaire.
 
-## `Gloo connectFullMesh Connection refused`
+## Blocage NCCL ou Gloo
 
-Vérifie `VLLM_HOST_IP` séparément sur chaque rang et fixe `GLOO_SOCKET_IFNAME` sur l'interface RoCE. Lance `./doctor-glm53.sh` et consulte [NETWORK.md](NETWORK.md).
+Causes probables :
 
-## NCCL bloque pendant l'initialisation
+- mauvais HCA ou nom d'interface ;
+- route vers le pair utilisant le réseau de management ;
+- IP configurée absente de l'interface Gloo ;
+- plage `NCCL_IB_ADDR_RANGE` ne contenant pas l'IP fabric ;
+- ancien `NCCL_IB_GID_INDEX` encore défini.
 
-Les causes les plus probables sont : mauvais `NCCL_IB_HCA`, GID non RoCE v2, index différent entre les nœuds, IP non portée par l'interface ou route qui repasse par le réseau de management. Reprends les valeurs d'une recipe TP=2 déjà validée sur le même fabric.
+Relancez `./doctor-glm53.sh` jusqu'à ce que les deux routes, les HCA et les GID dynamiques soient validés.
 
-## Le serveur télécharge pendant le boot
+## Le serveur tente de télécharger pendant le boot
 
-Arrête-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actifs. Exécute `./prepare-glm53.sh` jusqu'à ce que la validation des 120 shards réussisse sur les deux nœuds.
+Arrêtez-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actifs. Exécutez `./prepare-glm53.sh` jusqu'à validation des 120 shards sur les deux nœuds.
 
-## Le template ou le checkpoint est rejeté
+## Checkpoint ou config rejeté
 
-Un cache antérieur au correctif peut être présent. La révision exigée est `11d7321…`. Relance `./prepare-glm53.sh` : les blobs de poids inchangés sont réutilisés et le snapshot post-correctif est créé.
+La révision exigée est `f4aa9ef9b180d608b924fade8983dca18b9bcdf7`. Elle ne modifie aucun poids par rapport à `11d7321…` ; Hugging Face réutilise donc les blobs existants dans le même cache.
 
-Si `check-upstream-glm53.sh` signale un nouveau HEAD, n'édite pas simplement le SHA dans `.env.glm53`. Audite le diff, actualise le manifeste et recalcule les hashes.
+Si `check-upstream-glm53.sh` signale un nouveau HEAD, ne remplacez pas simplement le SHA. Le diff, l'index, la configuration et les hashes doivent d'abord être audités.
 
-## Sortie incohérente ou `NotImplementedError` attention
+## Sortie qui répète le prompt
 
-Reste sur le profil 32K conservateur et l'image dédiée. Capture les deux logs, le résultat du smoke et l'environnement. Des incidents similaires ont existé avec GLM-5.2 sur GB10/FlashInfer ; ils ne prouvent pas que GLM-5.3 a le même bug, mais justifient de ne publier aucune mesure qualité avant comparaison avec l'API officielle.
+C'est la signature connue du chemin NoPE de l'image vLLM officielle sur GB10. Vérifiez que les deux rangs utilisent exactement :
+
+```text
+ghcr.io/0xsero/glm-5.3-flash-sglang-sm121
+@sha256:f9ac60ba4071f8acd64f0f3c074aca308f6d659405fee46fc8031489a1e8b19b
+```
+
+Deux images différentes entre les rangs donnent souvent un boot trompeur ou une sortie incorrecte.
+
+## Erreur DSA, FlashInfer ou module quantifié
+
+Ne remplacez pas les backends du profil 32K. Le chemin audité exige :
+
+```text
+DSA prefill/decode = flashinfer_sparse_mla
+MoE = flashinfer_cutlass
+KV = fp8_e4m3
+shared-expert fusion = disabled
+```
+
+Capturez les deux logs avant toute modification.
+
+## MTP ne charge pas
+
+Revenez à `32k`. Le profil `32k-mtp` dépend de correctifs supplémentaires pour le draft NEXTN quantifié et ne doit être essayé qu'après une validation complète sans spéculation.
 
 ## Le boot dépasse une heure
 
-Un 320B MoE peut charger lentement, mais une heure sans API doit être traitée comme un échec. Le launcher récupère les logs et arrête les rangs. Cherche le dernier progrès de chargement, une compilation JIT, un OOM ou une attente NCCL.
-
+Un MoE de 320B peut charger lentement, mais une heure sans API doit être traitée comme un échec. Le launcher collecte les logs et arrête les rangs. Cherchez le dernier progrès de chargement, une compilation JIT, un OOM ou une attente NCCL.

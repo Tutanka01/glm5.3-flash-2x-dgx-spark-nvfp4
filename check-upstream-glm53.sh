@@ -8,12 +8,13 @@ source "$ROOT_DIR/scripts/lib.sh"
 PROFILE="${1:-}"
 glm53_load_config "$PROFILE"
 glm53_require_command curl
+glm53_require_command docker
 glm53_require_command python3
 
 CHECK_DIR="$(mktemp -d /tmp/glm53-upstream.XXXXXX)"
 trap 'rm -rf "$CHECK_DIR"' EXIT
 
-glm53_info "Reading current Hugging Face heads and templates"
+glm53_info "Reading current Hugging Face heads and audited runtime metadata"
 curl -fsSL https://huggingface.co/api/models/zai-org/GLM-5.3-Flash \
   -o "$CHECK_DIR/official.json"
 curl -fsSL https://huggingface.co/api/models/zai-org/GLM-5.3-Flash-BF16 \
@@ -26,15 +27,22 @@ curl -fsSL https://huggingface.co/zai-org/GLM-5.3-Flash-BF16/raw/main/chat_templ
   -o "$CHECK_DIR/bf16.jinja"
 curl -fsSL https://huggingface.co/LibertAIDAI/GLM-5.3-Flash-NVFP4/raw/main/chat_template.jinja \
   -o "$CHECK_DIR/quant.jinja"
-curl -fsSL https://hub.docker.com/v2/repositories/vllm/vllm-openai/tags/glm53-flash-arm64-cu130 \
-  -o "$CHECK_DIR/image.json"
+
+RUNTIME_SOURCE_REVISION="$(python3 -c '
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["runtime"]["source_revision"])
+' "$ROOT_DIR/metadata/checkpoint-manifest.json")"
+curl -fsSL \
+  "https://api.github.com/repos/0xSero/glm-5.3-flash-sglang-sm121/commits/$RUNTIME_SOURCE_REVISION" \
+  -o "$CHECK_DIR/runtime-source.json"
+docker manifest inspect "$GLM53_RUNTIME_IMAGE" > "$CHECK_DIR/image.json"
 
 python3 - \
   "$ROOT_DIR/metadata/checkpoint-manifest.json" \
   "$CHECK_DIR" \
   "$MODEL_ID" \
   "$MODEL_REVISION" \
-  "$GLM53_VLLM_IMAGE" <<'PY'
+  "$GLM53_RUNTIME_IMAGE" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -44,15 +52,13 @@ manifest=json.load(open(sys.argv[1], encoding="utf-8"))
 root=pathlib.Path(sys.argv[2])
 failures=[]
 
-expected_image=(
-    manifest["runtime"]["image_tag"] + "@" + manifest["runtime"]["image_digest"]
-)
+expected_image=manifest["runtime"]["image_tag"] + "@" + manifest["runtime"]["image_digest"]
 if sys.argv[3] != manifest["model"]["id"]:
     failures.append("MODEL_ID in .env.glm53 differs from the audited manifest")
 if sys.argv[4] != manifest["model"]["revision"]:
     failures.append("MODEL_REVISION in .env.glm53 differs from the audited manifest")
 if sys.argv[5] != expected_image:
-    failures.append("GLM53_VLLM_IMAGE in .env.glm53 differs from the audited manifest")
+    failures.append("GLM53_RUNTIME_IMAGE in .env.glm53 differs from the audited manifest")
 
 def load(name):
     return json.load(open(root/name, encoding="utf-8"))
@@ -75,14 +81,25 @@ for name in ("official.jinja", "bf16.jinja", "quant.jinja"):
     current_hash=sha(name)
     print(f"  {name}: sha256={current_hash}")
     if current_hash != expected_template:
-        failures.append(f"{name} no longer matches the audited corrected template")
+        failures.append(f"{name} no longer matches the audited template")
+
+source_sha=load("runtime-source.json").get("sha")
+expected_source=manifest["runtime"]["source_revision"]
+print(f"  SGLang patch source: current={source_sha} audited={expected_source}")
+if source_sha != expected_source:
+    failures.append("audited SGLang source revision is no longer reachable")
 
 image=load("image.json")
-current_digest=image.get("digest")
-expected_digest=manifest["runtime"]["image_digest"]
-print(f"  ARM64 image: current={current_digest} audited={expected_digest}")
-if current_digest != expected_digest:
-    failures.append("dedicated ARM64 image tag moved; audit it before changing the digest pin")
+arm64=[
+    item.get("digest")
+    for item in image.get("manifests", [])
+    if item.get("platform", {}).get("architecture") == "arm64"
+    and item.get("platform", {}).get("os") == "linux"
+]
+expected_platform=manifest["runtime"]["platform_manifest"]
+print(f"  SGLang ARM64 manifest: current={arm64} audited={expected_platform}")
+if arm64 != [expected_platform]:
+    failures.append("runtime OCI index does not contain the audited linux/arm64 manifest")
 
 if failures:
     for failure in failures:
@@ -91,8 +108,8 @@ if failures:
 
 print("Upstream audit gate passed.")
 print(
-    "Corrected template chronology: official BF16 "
-    f"{manifest['template_update']['official_bf16_date']} -> quant sync "
-    f"{manifest['template_update']['quant_sync_date']}."
+    "Current NVFP4 revision changes only README.md and config.json; "
+    "all 120 weight shards, the index and template are unchanged."
 )
+print("Runtime: patched SGLang SM121 image accepted on 2x GB10 TP=2.")
 PY

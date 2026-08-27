@@ -9,7 +9,7 @@ PROFILE="${1:-}"
 glm53_load_config "$PROFILE"
 
 printf 'Profile: %s\n' "$GLM53_PROFILE_RESOLVED"
-printf 'Endpoint: http://%s:%s/v1\n' "$VLLM_HOST_IP" "${VLLM_PORT:-8888}"
+printf 'Endpoint: http://%s:%s/v1\n' "$HEAD_FABRIC_IP" "$API_PORT"
 
 printf '\n===== HEAD / rank 0 =====\n'
 NODE_RANK=0 HEADLESS= glm53_compose ps || true
@@ -29,7 +29,7 @@ fi
 printf '\n===== API =====\n'
 STATUS_TMP="$(mktemp /tmp/glm53-status.XXXXXX)"
 trap 'rm -f "$STATUS_TMP"' EXIT
-if GLM53_CURL_MAX_TIME=10 glm53_api_curl "http://127.0.0.1:${VLLM_PORT:-8888}/v1/models" > "$STATUS_TMP" 2>/dev/null; then
+if GLM53_CURL_MAX_TIME=10 glm53_api_curl "http://127.0.0.1:${API_PORT}/v1/models" > "$STATUS_TMP" 2>/dev/null; then
   python3 - "$STATUS_TMP" <<'PY'
 import json, sys
 payload=json.load(open(sys.argv[1], encoding="utf-8"))

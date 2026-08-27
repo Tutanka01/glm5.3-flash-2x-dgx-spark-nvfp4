@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMMAND="$(ruby -ryaml -e '
-value=YAML.load_file(ARGV[0]).fetch("services").fetch("vllm-glm53").fetch("command").first
+value=YAML.load_file(ARGV[0]).fetch("services").fetch("sglang-glm53").fetch("command").first
 print value.gsub("$$", "$")
 ' "$ROOT_DIR/docker-compose.glm53.yml")"
 
@@ -16,36 +16,47 @@ run_profile() {
   source "$ROOT_DIR/profiles/$profile.env"
   set +a
   PATH="$ROOT_DIR/tests/mock-bin:$PATH" \
-  MODEL_ID=LibertAIDAI/GLM-5.3-Flash-NVFP4 \
-  MODEL_REVISION=11d73216cd636238e82e1d77fe1042ffab36e7fa \
+  MODEL_SNAPSHOT_CONTAINER=/cache/huggingface/hub/models--test/snapshots/f4aa \
   SERVED_MODEL_NAME=glm-5.3-flash-nvfp4 \
-  VLLM_HOST=0.0.0.0 VLLM_PORT=8888 NODE_RANK=1 HEADLESS=1 \
-  MASTER_ADDR=10.10.10.1 MASTER_PORT=25000 \
+  API_HOST=0.0.0.0 API_PORT=8888 API_KEY= \
+  NODE_RANK=1 HEADLESS=1 MASTER_ADDR=10.10.10.1 MASTER_PORT=25000 \
   bash -c "$COMMAND" > "$output_file"
 
-  grep -Fx -- 'serve' "$output_file" >/dev/null
-  grep -Fx -- 'LibertAIDAI/GLM-5.3-Flash-NVFP4' "$output_file" >/dev/null
-  grep -Fx -- '--tensor-parallel-size' "$output_file" >/dev/null
-  grep -Fx -- '--headless' "$output_file" >/dev/null
+  grep -Fx -- '-m' "$output_file" >/dev/null
+  grep -Fx -- 'sglang.launch_server' "$output_file" >/dev/null
+  grep -Fx -- '--model-path' "$output_file" >/dev/null
+  grep -Fx -- '/cache/huggingface/hub/models--test/snapshots/f4aa' "$output_file" >/dev/null
+  grep -Fx -- '--tp-size' "$output_file" >/dev/null
+  grep -Fx -- '--ep-size' "$output_file" >/dev/null
+  grep -Fx -- '--nnodes' "$output_file" >/dev/null
+  grep -Fx -- '--node-rank' "$output_file" >/dev/null
+  grep -Fx -- '--dist-init-addr' "$output_file" >/dev/null
+  grep -Fx -- '10.10.10.1:25000' "$output_file" >/dev/null
   grep -Fx -- "$MAX_MODEL_LEN" "$output_file" >/dev/null
+  grep -Fx -- "$MAX_NUM_SEQS" "$output_file" >/dev/null
+  grep -Fx -- "$MOE_BACKEND" "$output_file" >/dev/null
+  grep -Fx -- "$DSA_DECODE_BACKEND" "$output_file" >/dev/null
+  grep -Fx -- '--disable-shared-experts-fusion' "$output_file" >/dev/null
+  ! grep -Fx -- '--chat-template' "$output_file" >/dev/null
 
-  if [ "$MOE_BACKEND" = "auto" ]; then
-    ! grep -Fx -- '--moe-backend' "$output_file" >/dev/null
+  if [ "$DISABLE_CUDA_GRAPH" = "1" ]; then
+    grep -Fx -- '--disable-cuda-graph' "$output_file" >/dev/null
   else
-    grep -Fx -- '--moe-backend' "$output_file" >/dev/null
-    grep -Fx -- "$MOE_BACKEND" "$output_file" >/dev/null
+    ! grep -Fx -- '--disable-cuda-graph' "$output_file" >/dev/null
   fi
   if [ "$MTP_NUM_TOKENS" -gt 0 ]; then
-    grep -Fx -- '--speculative-config' "$output_file" >/dev/null
-    grep -F -- "\"num_speculative_tokens\":$MTP_NUM_TOKENS" "$output_file" >/dev/null
+    grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
+    grep -Fx -- 'NEXTN' "$output_file" >/dev/null
+    grep -Fx -- '--speculative-num-steps' "$output_file" >/dev/null
+    grep -Fx -- "$MTP_NUM_TOKENS" "$output_file" >/dev/null
+    grep -Fx -- '--speculative-num-draft-tokens' "$output_file" >/dev/null
   else
-    ! grep -Fx -- '--speculative-config' "$output_file" >/dev/null
+    ! grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
   fi
   rm -f "$output_file"
 }
 
-for profile in 32k 64k 128k 256k 32k-mtp 32k-native; do
+for profile in 32k 64k 128k 256k 32k-mtp 32k-eager; do
   run_profile "$profile"
 done
-printf 'compose command profiles: OK\n'
-
+printf 'SGLang compose command profiles: OK\n'

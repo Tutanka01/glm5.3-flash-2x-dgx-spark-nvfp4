@@ -130,6 +130,11 @@ def validate_snapshot(model_dir: Path, manifest_path: Path) -> list[str]:
             require(len(ignore) == len(set(ignore)), "duplicate quantization ignore entries")
             for protected in ("lm_head", "model.language_model.embed_tokens", "model.visual.*"):
                 require(protected in ignore, f"protected BF16 path missing from ignore: {protected}")
+            for fused_name in quant_spec.get("required_ignore", []):
+                require(
+                    fused_name in ignore,
+                    f"required fused-module ignore path is missing: {fused_name}",
+                )
 
     index_path = model_dir / "model.safetensors.index.json"
     if index_path.exists():
@@ -204,7 +209,7 @@ def validate_snapshot(model_dir: Path, manifest_path: Path) -> list[str]:
             f"  indexed tensor payload: {_gib(payload_bytes):.2f} GiB; "
             f"ideal TP=2 share: {_gib(payload_bytes) / 2:.2f} GiB/node"
         )
-        print("  tokenizer/chat template/generation/processor hashes: official-source match")
+        print("  config/index/tokenizer/template/generation/processor hashes: audited match")
         print("  unexpected executable files: none")
 
     return failures
@@ -231,4 +236,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -53,7 +53,12 @@ class ValidateCheckpointTest(unittest.TestCase):
                 "config_groups": {
                     "group_0": {"weights": {"num_bits": 4, "type": "float", "group_size": 16}}
                 },
-                "ignore": ["lm_head", "model.language_model.embed_tokens", "model.visual.*"],
+                "ignore": [
+                    "lm_head",
+                    "model.language_model.embed_tokens",
+                    "model.visual.*",
+                    "*.self_attn.qkv_proj",
+                ],
             },
         }
         (snapshot / "config.json").write_text(json.dumps(config), encoding="utf-8")
@@ -90,7 +95,8 @@ class ValidateCheckpointTest(unittest.TestCase):
                 "num_bits": 4,
                 "type": "float",
                 "group_size": 16,
-                "ignore_count": 3,
+                "ignore_count": 4,
+                "required_ignore": ["*.self_attn.qkv_proj"],
             },
             "index": {
                 "tensor_payload_bytes": 1234,
@@ -101,13 +107,18 @@ class ValidateCheckpointTest(unittest.TestCase):
                 "expert_weight_scales_2": 1,
                 "non_expert_entries": 1,
             },
-            "files": {name: digest(data) for name, data in static_content.items() if name in {
-                "chat_template.jinja",
-                "generation_config.json",
-                "processor_config.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-            }},
+            "files": {
+                name: digest((snapshot / name).read_bytes())
+                for name in (
+                    "config.json",
+                    "model.safetensors.index.json",
+                    "chat_template.jinja",
+                    "generation_config.json",
+                    "processor_config.json",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                )
+            },
         }
         manifest_path = root / "manifest.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

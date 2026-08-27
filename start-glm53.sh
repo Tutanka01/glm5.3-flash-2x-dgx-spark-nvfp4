@@ -66,13 +66,13 @@ WAIT_TIMEOUT="${START_WAIT_TIMEOUT:-3600}"
 WAIT_INTERVAL="${START_WAIT_INTERVAL:-15}"
 START_TIME="$(date +%s)"
 NEXT_PROGRESS=0
-glm53_info "Waiting up to ${WAIT_TIMEOUT}s for http://127.0.0.1:${VLLM_PORT:-8888}/v1/models"
+glm53_info "Waiting up to ${WAIT_TIMEOUT}s for http://127.0.0.1:${API_PORT}/v1/models"
 
 while :; do
   NOW="$(date +%s)"
   ELAPSED=$((NOW - START_TIME))
   if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
-    glm53_die "Timed out waiting for vLLM readiness after ${ELAPSED}s"
+    glm53_die "Timed out waiting for SGLang readiness after ${ELAPSED}s"
   fi
 
   if ! glm53_container_running_local; then
@@ -82,7 +82,7 @@ while :; do
     glm53_die "Worker container exited before readiness"
   fi
 
-  if GLM53_CURL_MAX_TIME=5 glm53_api_curl "http://127.0.0.1:${VLLM_PORT:-8888}/v1/models" >/dev/null 2>&1; then
+  if GLM53_CURL_MAX_TIME=5 glm53_api_curl "http://127.0.0.1:${API_PORT}/v1/models" >/dev/null 2>&1; then
     READY=1
     break
   fi
@@ -103,4 +103,4 @@ if [ "${START_SMOKE:-1}" = "1" ]; then
 fi
 
 trap - EXIT
-printf '\nGLM-5.3-Flash is serving at http://%s:%s/v1\n' "$VLLM_HOST_IP" "${VLLM_PORT:-8888}"
+printf '\nGLM-5.3-Flash is serving at http://%s:%s/v1\n' "$HEAD_FABRIC_IP" "$API_PORT"

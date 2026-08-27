@@ -18,21 +18,21 @@ warn() { printf '  [WARN] %s\n' "$*" >&2; WARNINGS=$((WARNINGS + 1)); }
 fail() { printf '  [FAIL] %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
 
 if [ "$ROLE" = "head" ]; then
-  NODE_IP="$VLLM_HOST_IP"
+  NODE_IP="$HEAD_FABRIC_IP"
+  PEER_IP="$WORKER_FABRIC_IP"
   NODE_CACHE="$HF_CACHE"
   NODE_HCA="$NCCL_IB_HCA"
   NODE_NCCL_IF="$NCCL_SOCKET_IFNAME"
   NODE_TP_IF="$TP_SOCKET_IFNAME"
   NODE_GLOO_IF="$GLOO_SOCKET_IFNAME"
-  NODE_GID="$NCCL_IB_GID_INDEX"
 else
-  NODE_IP="$WORKER_VLLM_HOST_IP"
+  NODE_IP="$WORKER_FABRIC_IP"
+  PEER_IP="$HEAD_FABRIC_IP"
   NODE_CACHE="$WORKER_HF_CACHE"
   NODE_HCA="${WORKER_NCCL_IB_HCA:-$NCCL_IB_HCA}"
   NODE_NCCL_IF="${WORKER_NCCL_SOCKET_IFNAME:-$NCCL_SOCKET_IFNAME}"
   NODE_TP_IF="${WORKER_TP_SOCKET_IFNAME:-$TP_SOCKET_IFNAME}"
   NODE_GLOO_IF="${WORKER_GLOO_SOCKET_IFNAME:-$GLOO_SOCKET_IFNAME}"
-  NODE_GID="${WORKER_NCCL_IB_GID_INDEX:-$NCCL_IB_GID_INDEX}"
 fi
 
 printf 'Node doctor: %s\n' "$ROLE"
@@ -132,11 +132,18 @@ if command -v ip >/dev/null 2>&1; then
   else
     fail "fabric IP $NODE_IP is not assigned to $NODE_GLOO_IF"
   fi
+
+  ROUTE_LINE="$(ip -4 route get "$PEER_IP" 2>/dev/null | head -n 1)"
+  ROUTE_DEV="$(printf '%s\n' "$ROUTE_LINE" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}')"
+  ROUTE_SRC="$(printf '%s\n' "$ROUTE_LINE" | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')"
+  if [ "$ROUTE_DEV" = "$NODE_GLOO_IF" ] && [ "$ROUTE_SRC" = "$NODE_IP" ]; then
+    pass "route to $PEER_IP uses $ROUTE_DEV with source $ROUTE_SRC"
+  else
+    fail "route to $PEER_IP is '$ROUTE_LINE'; expected dev $NODE_GLOO_IF src $NODE_IP"
+  fi
 else
   fail "ip command not found"
 fi
-
-case "$NODE_GID" in ''|*[!0-9]*) fail "NCCL_IB_GID_INDEX is not a decimal integer: $NODE_GID" ;; esac
 
 OLD_IFS="$IFS"
 IFS=','
@@ -158,19 +165,30 @@ for hca_token in "${HCA_TOKENS[@]}"; do
     fail "RDMA HCA missing: $hca_name"
     continue
   fi
-  if [ "$NODE_GID" -ge 0 ] 2>/dev/null; then
-    gid_path="/sys/class/infiniband/$hca_name/ports/$hca_port/gids/$NODE_GID"
-    gid_type_path="/sys/class/infiniband/$hca_name/ports/$hca_port/gid_attrs/types/$NODE_GID"
-    if [ -r "$gid_path" ]; then
-      gid_value="$(tr -d '[:space:]' < "$gid_path")"
-      case "$gid_value" in ''|::|0000:0000:0000:0000:0000:0000:0000:0000) fail "empty GID at $hca_name:$hca_port index $NODE_GID" ;; *) pass "GID $NODE_GID on $hca_name:$hca_port = $gid_value" ;; esac
-      if [ -r "$gid_type_path" ]; then
-        gid_type="$(tr -d '\r\n' < "$gid_type_path")"
-        case "$gid_type" in *v2*) pass "GID type=$gid_type" ;; *) warn "GID type is '$gid_type', expected RoCE v2" ;; esac
-      fi
-    else
-      fail "GID index $NODE_GID does not exist on $hca_name:$hca_port"
-    fi
+
+  gid_root="/sys/class/infiniband/$hca_name/ports/$hca_port"
+  roce_v2_found=0
+  for gid_path in "$gid_root"/gids/*; do
+    [ -e "$gid_path" ] || continue
+    gid_index="${gid_path##*/}"
+    gid_value="$(cat "$gid_path" 2>/dev/null || true)"
+    case "$gid_value" in ''|::|0000:0000:0000:0000:0000:0000:0000:0000) continue ;; esac
+    gid_type="$(cat "$gid_root/gid_attrs/types/$gid_index" 2>/dev/null || true)"
+    gid_ndev="$(cat "$gid_root/gid_attrs/ndevs/$gid_index" 2>/dev/null || true)"
+    printf '  [INFO] GID %s = %s type=%s ndev=%s\n' \
+      "$gid_index" "$gid_value" "${gid_type:-unknown}" "${gid_ndev:-unknown}"
+    case "$gid_type" in
+      *v2*)
+        if [ -z "$gid_ndev" ] || [ "$gid_ndev" = "$NODE_NCCL_IF" ]; then
+          roce_v2_found=1
+        fi
+        ;;
+    esac
+  done
+  if [ "$roce_v2_found" = "1" ]; then
+    pass "populated RoCE v2 GID available; NCCL will select it dynamically"
+  else
+    fail "no populated RoCE v2 GID on $hca_name:$hca_port for $NODE_NCCL_IF"
   fi
 done
 
@@ -180,10 +198,10 @@ else
   fail "/dev/infiniband is missing"
 fi
 
-if docker image inspect "$GLM53_VLLM_IMAGE" >/dev/null 2>&1; then
-  pass "pinned vLLM image is local"
+if docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1; then
+  pass "pinned SGLang image is local"
 else
-  warn "pinned vLLM image is not local yet (prepare will pull it)"
+  warn "pinned SGLang image is not local yet (prepare will pull it)"
 fi
 
 if [ "$ERRORS" -gt 0 ]; then

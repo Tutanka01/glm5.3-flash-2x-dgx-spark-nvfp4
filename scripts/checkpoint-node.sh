@@ -32,16 +32,16 @@ fi
 mkdir -p \
   "$NODE_CACHE" \
   "$NODE_CACHE/tmp" \
-  "$NODE_CACHE/vllm-cache" \
+  "$NODE_CACHE/sglang-cache" \
   "$NODE_CACHE/triton-cache" \
   "$NODE_CACHE/torch-extensions" \
   "$NODE_CACHE/cuda-cache"
 
 if [ "$MODE" = "download" ]; then
-  glm53_info "Pulling pinned runtime image on $ROLE: $GLM53_VLLM_IMAGE"
-  docker pull "$GLM53_VLLM_IMAGE"
+  glm53_info "Pulling pinned runtime image on $ROLE: $GLM53_RUNTIME_IMAGE"
+  docker pull "$GLM53_RUNTIME_IMAGE"
 else
-  docker image inspect "$GLM53_VLLM_IMAGE" >/dev/null 2>&1 || \
+  docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1 || \
     glm53_die "Pinned image is not local on $ROLE. Run ./prepare-glm53.sh first."
 fi
 
@@ -77,5 +77,4 @@ if [ "$MODE" = "local" ]; then
 fi
 
 glm53_info "$([ "$MODE" = "download" ] && printf 'Preparing' || printf 'Validating') checkpoint on $ROLE"
-docker "${DOCKER_ARGS[@]}" "$GLM53_VLLM_IMAGE" "${PYTHON_ARGS[@]}"
-
+docker "${DOCKER_ARGS[@]}" "$GLM53_RUNTIME_IMAGE" "${PYTHON_ARGS[@]}"

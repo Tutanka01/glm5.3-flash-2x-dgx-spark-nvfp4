@@ -1,8 +1,8 @@
 {
-  "verified_at": "2026-08-26T21:11:30+02:00",
+  "verified_at": "2026-08-27T09:39:45+02:00",
   "model": {
     "id": "LibertAIDAI/GLM-5.3-Flash-NVFP4",
-    "revision": "11d73216cd636238e82e1d77fe1042ffab36e7fa",
+    "revision": "f4aa9ef9b180d608b924fade8983dca18b9bcdf7",
     "architecture": "Glm5NextForConditionalGeneration",
     "model_type": "glm5_next",
     "max_position_embeddings": 1048576
@@ -23,6 +23,20 @@
     "quant_sync_title": "Sync chat_template.jinja with upstream (2026-08-26 16:31Z): fixes multimodal image/video/audio token emission",
     "sha256": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891"
   },
+  "current_revision_audit": {
+    "previous_revision": "11d73216cd636238e82e1d77fe1042ffab36e7fa",
+    "config_revision": "cf5434c00bf69bd0e6b58420c9636999472a2291",
+    "current_revision": "f4aa9ef9b180d608b924fade8983dca18b9bcdf7",
+    "current_revision_date": "2026-08-27T07:24:39Z",
+    "changed_files": [
+      "README.md",
+      "config.json"
+    ],
+    "weight_files_unchanged": true,
+    "index_unchanged": true,
+    "template_unchanged": true,
+    "config_change": "Adds fused SGLang module names to quantization_config.ignore; all other JSON values are unchanged"
+  },
   "quantization": {
     "quant_method": "modelopt",
     "quant_algo": "NVFP4",
@@ -31,7 +45,20 @@
     "num_bits": 4,
     "type": "float",
     "group_size": 16,
-    "ignore_count": 32
+    "ignore_count": 43,
+    "required_ignore": [
+      "*.self_attn.qkv_proj",
+      "*.self_attn.fused_qkvbfg_a_proj",
+      "*.self_attn.fused_fg_b_proj",
+      "*.self_attn.qkv_conv1d",
+      "*.self_attn.fused_qkv_a_proj_with_mqa",
+      "*.self_attn.q_conv1d",
+      "*.self_attn.k_conv1d",
+      "*.self_attn.v_conv1d",
+      "*.self_attn.o_norm",
+      "visual.*",
+      "*.visual.*"
+    ]
   },
   "index": {
     "tensor_payload_bytes": 194644803576,
@@ -43,6 +70,8 @@
     "non_expert_entries": 1618
   },
   "files": {
+    "config.json": "5db46f44956e4a8a0cc8ed54b6d77bf99dd7c1ec90c58975d1952560768513d5",
+    "model.safetensors.index.json": "f3a4c40897e00fab0de0380b05b66279bc341233cc14fa71a80bab2b683e3b7b",
     "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
     "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
     "chat_template.jinja": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891",
@@ -50,9 +79,23 @@
     "processor_config.json": "aae38374c94b08cc9b0547c6e64f05b951bd9735cea571c6988f5ed552bed3ed"
   },
   "runtime": {
-    "image_tag": "vllm/vllm-openai:glm53-flash-arm64-cu130",
-    "image_digest": "sha256:905c02933be6021301db2dc284e24e3727467aa3a0f63b41d609885778a07bce",
-    "vllm_support_pr": 53906,
-    "vllm_support_pr_head": "933876c388fb129ad82590660e6506614559cb86"
+    "engine": "sglang",
+    "image_tag": "ghcr.io/0xsero/glm-5.3-flash-sglang-sm121",
+    "image_digest": "sha256:f9ac60ba4071f8acd64f0f3c074aca308f6d659405fee46fc8031489a1e8b19b",
+    "platform_manifest": "sha256:7aff51ea7050480dc47137055b5201b73e23e7803d9439233742cab65e3e5609",
+    "platform": "linux/arm64",
+    "base_image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "source_repository": "https://github.com/0xSero/glm-5.3-flash-sglang-sm121",
+    "source_revision": "dfb1bb7e45c20058d37df7a39cceda45a9d216a8",
+    "patch_sha256": {
+      "sglang-glm5_next-debug.py": "aeb9eb145958644de548b15031842c8b8c3daac6daa73139d5c676a7a2b211da",
+      "sglang-deepseek_nextn-glm53.py": "dce70ed7392702154e69433f8faf498fb322eca4890683eb54d7857ae69aaf5a",
+      "sglang-quant-utils-sm120.py": "0814b359c0be04b7021ac0da96a3c58fea83d5c6290483df5b509fac9f196ecf",
+      "sglang-modelopt-quant-sm120.py": "10367ba1573c11e5b3c7e88195dab77f0cf76169e5db4dd9baf6d366a8652ead",
+      "sglang-flash_mla_sm120-glm53.py": "06c7f42a192997ab4be73dad926fe9553ea79708d0e5b1583e26720fc0ef6f8e",
+      "sglang-dsa_backend-glm53.py": "1b786b161e9279b707f6bc24cb31b835bad1fc6a55f12d80dda47ee071636bc7"
+    },
+    "accepted_on_tp2_gb10": "2026-08-27T02:10:00Z",
+    "vllm_gb10_status": "rejected: official day-0 image produces incorrect NoPE output on sm_121"
   }
 }

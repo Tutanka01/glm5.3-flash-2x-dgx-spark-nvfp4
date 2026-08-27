@@ -206,7 +206,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8888/v1")
     parser.add_argument("--model", default="glm-5.3-flash-nvfp4")
-    parser.add_argument("--api-key-env", default="VLLM_API_KEY")
+    parser.add_argument("--api-key-env", default="API_KEY")
     parser.add_argument("--compare-base-url")
     parser.add_argument("--compare-model")
     parser.add_argument("--compare-api-key-env", default="ZAI_API_KEY")

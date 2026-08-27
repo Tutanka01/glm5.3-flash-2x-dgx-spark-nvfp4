@@ -25,7 +25,7 @@ done
 glm53_load_config "$PROFILE"
 glm53_require_command curl
 glm53_require_command python3
-BASE_URL="${BASE_URL:-http://127.0.0.1:${VLLM_PORT:-8888}/v1}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:${API_PORT}/v1}"
 BASE_URL="${BASE_URL%/}"
 
 SMOKE_TMP="$(mktemp -d /tmp/glm53-smoke.XXXXXX)"

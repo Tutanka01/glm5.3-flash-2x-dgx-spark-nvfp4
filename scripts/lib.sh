@@ -9,7 +9,7 @@ GLM53_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GLM53_ENV_FILE="${GLM53_ENV_FILE:-$GLM53_ROOT/.env.glm53}"
 GLM53_COMPOSE_FILE="$GLM53_ROOT/docker-compose.glm53.yml"
 GLM53_PROJECT_NAME="${GLM53_PROJECT_NAME:-glm53}"
-GLM53_SERVICE="vllm-glm53"
+GLM53_SERVICE="sglang-glm53"
 
 glm53_info() {
   printf '[glm53] %s\n' "$*"
@@ -67,11 +67,24 @@ glm53_load_config() {
   source "$GLM53_PROFILE_FILE"
   set +a
 
+  # Canonical names with read-only compatibility for environments created by
+  # the earlier vLLM draft. The audited image check still rejects the old image.
+  HEAD_FABRIC_IP="${HEAD_FABRIC_IP:-${VLLM_HOST_IP:-}}"
+  WORKER_FABRIC_IP="${WORKER_FABRIC_IP:-${WORKER_VLLM_HOST_IP:-}}"
+  API_HOST="${API_HOST:-${VLLM_HOST:-0.0.0.0}}"
+  API_PORT="${API_PORT:-${VLLM_PORT:-8888}}"
+  API_KEY="${API_KEY:-${VLLM_API_KEY:-}}"
+  GLM53_RUNTIME_IMAGE="${GLM53_RUNTIME_IMAGE:-${GLM53_VLLM_IMAGE:-}}"
+  MASTER_ADDR="${MASTER_ADDR:-$HEAD_FABRIC_IP}"
   WORKER_HF_CACHE="${WORKER_HF_CACHE:-${HF_CACHE:-}}"
   SSH_PORT="${SSH_PORT:-22}"
+  MODEL_CACHE_SLUG="models--${MODEL_ID//\//--}"
+  MODEL_SNAPSHOT_CONTAINER="/cache/huggingface/hub/$MODEL_CACHE_SLUG/snapshots/$MODEL_REVISION"
   export GLM53_ROOT GLM53_ENV_FILE GLM53_COMPOSE_FILE GLM53_PROJECT_NAME
   export GLM53_SERVICE GLM53_PROFILE_RESOLVED GLM53_PROFILE_FILE
-  export WORKER_HF_CACHE SSH_PORT
+  export HEAD_FABRIC_IP WORKER_FABRIC_IP API_HOST API_PORT API_KEY
+  export GLM53_RUNTIME_IMAGE MASTER_ADDR WORKER_HF_CACHE SSH_PORT
+  export MODEL_CACHE_SLUG MODEL_SNAPSHOT_CONTAINER
 
   GLM53_SSH_ARGS=(-o BatchMode=yes -o ConnectTimeout=10 -p "$SSH_PORT")
   GLM53_SCP_ARGS=(-q -o BatchMode=yes -o ConnectTimeout=10 -P "$SSH_PORT")
@@ -133,7 +146,7 @@ glm53_worker_compose() {
   local worker_nccl_if="${WORKER_NCCL_SOCKET_IFNAME:-${NCCL_SOCKET_IFNAME:-}}"
   local worker_tp_if="${WORKER_TP_SOCKET_IFNAME:-${TP_SOCKET_IFNAME:-}}"
   local worker_gloo_if="${WORKER_GLOO_SOCKET_IFNAME:-${GLOO_SOCKET_IFNAME:-}}"
-  local worker_gid="${WORKER_NCCL_IB_GID_INDEX:-${NCCL_IB_GID_INDEX:-}}"
+  local worker_addr_range="${WORKER_NCCL_IB_ADDR_RANGE:-${NCCL_IB_ADDR_RANGE:-}}"
   local remote_command wrapped
   local -a command_parts
 
@@ -143,12 +156,14 @@ glm53_worker_compose() {
     NODE_RANK=1
     HEADLESS=1
     "HF_CACHE=$WORKER_HF_CACHE"
-    "VLLM_HOST_IP=$WORKER_VLLM_HOST_IP"
+    "MODEL_SNAPSHOT_CONTAINER=$MODEL_SNAPSHOT_CONTAINER"
+    "HEAD_FABRIC_IP=$HEAD_FABRIC_IP"
+    "WORKER_FABRIC_IP=$WORKER_FABRIC_IP"
     "NCCL_IB_HCA=$worker_hca"
     "NCCL_SOCKET_IFNAME=$worker_nccl_if"
     "TP_SOCKET_IFNAME=$worker_tp_if"
     "GLOO_SOCKET_IFNAME=$worker_gloo_if"
-    "NCCL_IB_GID_INDEX=$worker_gid"
+    "NCCL_IB_ADDR_RANGE=$worker_addr_range"
     docker compose
     --project-name "$GLM53_PROJECT_NAME"
     --env-file .env.glm53
@@ -194,8 +209,8 @@ glm53_sync_worker() {
 glm53_api_curl() {
   local -a curl_args
   curl_args=(-fsS --connect-timeout 5 --max-time "${GLM53_CURL_MAX_TIME:-30}")
-  if [ -n "${VLLM_API_KEY:-}" ]; then
-    curl_args+=(-H "Authorization: Bearer $VLLM_API_KEY")
+  if [ -n "${API_KEY:-}" ]; then
+    curl_args+=(-H "Authorization: Bearer $API_KEY")
   fi
   curl "${curl_args[@]}" "$@"
 }

@@ -8,8 +8,7 @@ case "$ALL_ARGS" in
     [ -f "$STATE_DIR/worker" ] && printf 'worker-container\n'
     ;;
   *"up\\ -d\\ --no-build\\ --force-recreate"*) touch "$STATE_DIR/worker" ;;
-  *"stop\\ vllm-glm53"*|*"down\\ --remove-orphans"*) rm -f "$STATE_DIR/worker" ;;
+  *"stop\\ sglang-glm53"*|*"down\\ --remove-orphans"*) rm -f "$STATE_DIR/worker" ;;
   *"logs\\ --no-color"*) printf 'mock worker logs\n' ;;
   *) ;;
 esac
-
