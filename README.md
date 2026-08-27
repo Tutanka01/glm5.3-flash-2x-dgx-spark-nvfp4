@@ -1,10 +1,290 @@
 # GLM-5.3-Flash NVFP4 sur 2× DGX Spark / PGX
 
-Recette de déploiement reproductible pour servir `LibertAIDAI/GLM-5.3-Flash-NVFP4` sur deux machines GB10 en tensor parallel (`TP=2`), avec SGLang et une API compatible OpenAI.
+Cette recette déploie `LibertAIDAI/GLM-5.3-Flash-NVFP4` avec SGLang sur
+**deux** machines GB10 en tensor parallel (`TP=2`). Une seule commande lancée
+sur le head synchronise le worker, contrôle les deux machines, charge le modèle
+et expose une API compatible OpenAI.
 
-L'objectif initial est volontairement simple et vérifiable : charger le modèle sur les deux nœuds, exposer une API sur le head et obtenir une réponse cohérente. La configuration par défaut privilégie donc la fiabilité avant la performance : runtime ARM64/CUDA 13 corrigé pour `sm_121`, MoE `flashinfer_cutlass`, attention DSA corrigée, cache KV FP8, contexte 32K, une seule requête et aucun MTP.
+> **État actuel :** le runtime épinglé produit des réponses cohérentes et les
+> profils 32K/128K ont été mesurés sur deux GB10. Les profils 256K et 512K
+> restent des candidats expérimentaux tant qu'ils n'ont pas passé le benchmark
+> froid long-contexte sur votre cluster. Le checkpoint NVFP4 est communautaire ;
+> ne confondez pas validation technique et équivalence qualité avec l'API
+> officielle.
 
-> **Statut :** le runtime épinglé a produit des réponses cohérentes en TP=2 sur deux GB10, mais l'intégration de cette recette doit encore être validée sur votre fabric. Le checkpoint reste communautaire ; sa qualité doit être comparée indépendamment à l'API officielle.
+## À lire avant de commencer
+
+- Cette recette exige **2× DGX Spark/ThinkStation PGX GB10** sous Linux ARM64,
+  avec un driver compatible CUDA 13, Docker et Docker Compose v2. Elle ne lance
+  pas ce checkpoint 320B sur une seule machine.
+- Toutes les commandes de ce guide s'exécutent sur le **head**. Il n'est pas
+  nécessaire de cloner manuellement le dépôt sur le worker : les scripts y
+  copient les fichiers nécessaires par SSH.
+- Le head doit disposer de `git`, `python3`, `curl`, `ssh` et `scp`. Les deux
+  machines doivent permettre à l'utilisateur courant d'accéder à Docker et au
+  GPU avec `nvidia-smi`.
+- Chaque machine stocke une copie complète du checkpoint, soit environ
+  **181,3 GiB**. Prévoyez au moins **205 GiB libres par nœud**.
+- Le premier téléchargement peut être long. Un démarrage déjà préparé prend
+  ensuite souvent 10 à 15 minutes sur le cluster de référence ; le script
+  attend jusqu'à une heure. Ne l'interrompez pas tant qu'il affiche une
+  progression de chargement.
+- Le chemin RoCE entre les deux machines doit déjà fonctionner. Les scripts
+  peuvent le vérifier, mais ils ne peuvent pas inventer les bonnes interfaces
+  et adresses pour votre câblage.
+- Arrêtez les autres modèles gourmands en mémoire sur les deux nœuds. Le swap
+  désactivé est recommandé pendant la première mise en service.
+
+## Parcours guidé : de zéro à une API validée
+
+Suivez les étapes dans l'ordre. Ne passez au profil suivant que lorsque le
+résultat attendu de l'étape courante est obtenu.
+
+### 1. Préparer le head et l'accès au worker
+
+Sur le head :
+
+```bash
+git clone https://github.com/Tutanka01/glm5.3-flash-2x-dgx-spark-nvfp4.git
+cd glm5.3-flash-2x-dgx-spark-nvfp4
+docker compose version
+python3 --version
+curl --version
+```
+
+Vérifiez ensuite que le head peut joindre le worker sans demander de mot de
+passe. Remplacez la destination par celle que vous utiliserez dans
+`WORKER_HOST` :
+
+```bash
+ssh -o BatchMode=yes utilisateur@worker true
+```
+
+Si cette dernière commande échoue, configurez d'abord une clé SSH, par exemple :
+
+```bash
+ssh-keygen -t ed25519
+ssh-copy-id utilisateur@worker
+ssh -o BatchMode=yes utilisateur@worker true
+```
+
+Le lancement automatique ne fonctionnera pas avec une invite de mot de passe
+interactive.
+
+### 2. Créer la configuration du cluster
+
+```bash
+cp .env.glm53.example .env.glm53
+chmod 600 .env.glm53
+$EDITOR .env.glm53
+```
+
+Les valeurs à adapter sont regroupées au début du fichier :
+
+| Groupe | Variables principales | Signification |
+|---|---|---|
+| Accès worker | `WORKER_HOST`, `WORKER_DIR` | destination SSH et dossier absolu créé sur le worker |
+| Fabric | `HEAD_FABRIC_IP`, `WORKER_FABRIC_IP`, `MASTER_ADDR` | adresses privées utilisées entre les deux rangs |
+| Interfaces | `NCCL_SOCKET_IFNAME`, `TP_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME` | interface réseau portant l'IP fabric sur le head |
+| RDMA | `NCCL_IB_HCA`, `NCCL_IB_ADDR_RANGE` | HCA RoCE et sous-réseau du fabric |
+| Worker différent | variables préfixées `WORKER_` | uniquement si les noms ou chemins diffèrent sur le worker |
+| API cliente | `API_ADVERTISE_HOST` | IP de management utilisée par OpenCode et les autres clients |
+
+Pour identifier les interfaces et le HCA sur chaque machine :
+
+```bash
+ip -br -4 addr
+ibdev2netdev
+```
+
+Reprenez de préférence les valeurs d'une recette TP=2 déjà fonctionnelle sur
+ces deux machines. Le détail et les exemples se trouvent dans
+[docs/NETWORK.md](docs/NETWORK.md).
+
+Conservez sans modification `MODEL_ID`, `MODEL_REVISION` et
+`GLM53_RUNTIME_IMAGE`. N'ajoutez pas `NCCL_IB_GID_INDEX` : ce runtime sélectionne
+automatiquement un GID RoCE v2.
+
+### 3. Valider la configuration et les deux machines
+
+```bash
+./validate-glm53.sh --config-only
+./doctor-glm53.sh
+```
+
+La première commande refuse les valeurs manquantes, les anciens pins et les
+combinaisons incohérentes. Le doctor vérifie ensuite, sur les deux nœuds,
+l'architecture ARM64, le GPU, Docker, la mémoire, le disque, les interfaces,
+les routes, le HCA et les GID RoCE.
+
+Résultat attendu :
+
+```text
+[glm53] Configuration is valid
+[glm53] Two-node doctor completed successfully
+```
+
+Un `[FAIL]` est bloquant. Un `[WARN]` doit être compris avant de continuer ; les
+cas connus sont expliqués dans [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+### 4. Télécharger et vérifier le runtime et le checkpoint
+
+```bash
+./prepare-glm53.sh
+```
+
+Cette commande vérifie les pins distants, synchronise la recette, tire l'image
+sur les deux machines, télécharge le snapshot complet sur chacune et valide les
+120 shards ainsi que les métadonnées NVFP4. Par défaut, les téléchargements sont
+séquentiels pour ne pas saturer une connexion Internet partagée. Si chaque
+machine possède réellement son propre accès rapide :
+
+```bash
+PREPARE_PARALLEL=1 ./prepare-glm53.sh
+```
+
+Résultat attendu :
+
+```text
+[glm53] Preparation complete: pinned image and checkpoint validated on both nodes
+```
+
+Les démarrages suivants réutilisent les fichiers locaux et restent hors ligne.
+
+### 5. Faire le premier démarrage sûr
+
+Commencez toujours par `32k`, sans MTP et avec une seule requête :
+
+```bash
+./start-glm53.sh 32k
+```
+
+Le script lance le worker, puis le head, attend `/v1/models` et termine par une
+génération déterministe. Des messages de compilation ou de capture CUDA sont
+normaux. Le succès est uniquement confirmé par les dernières lignes :
+
+```text
+[glm53] Basic chat smoke test passed
+GLM-5.3-Flash is serving at http://<ADRESSE_HEAD>:8888/v1
+```
+
+Si un rang tombe avant ce point, le launcher collecte les journaux et arrête les
+deux conteneurs. Ne lancez pas un benchmark pendant le chargement.
+
+### 6. Vérifier le service avant de l'utiliser
+
+```bash
+./status-glm53.sh 32k
+./smoke-glm53.sh --profile 32k --tools
+./bench-glm53.py --runs 3
+```
+
+Le statut doit montrer les deux conteneurs actifs, le bon identifiant de modèle
+et les deux lignes suivantes :
+
+```text
+ready model=glm-5.3-flash-nvfp4 max_model_len=32768
+tokenizer ready
+```
+
+Selon la version de SGLang, `max_model_len` peut être affiché comme `unknown` ;
+le bon identifiant de modèle et `tokenizer ready` restent obligatoires.
+
+Le smoke test vérifie le chat et le tool calling. Le benchmark doit terminer
+avec toutes les requêtes réussies. Si vous avez défini `API_KEY` dans
+`.env.glm53`, exportez la même variable dans le terminal avant d'utiliser les
+clients Python de benchmark :
+
+```bash
+export API_KEY='même valeur que dans .env.glm53'
+```
+
+À ce stade seulement, le déploiement de base est validé.
+
+## Choisir et valider un profil de production
+
+Le meilleur profil dépend du type de charge. Les recommandations issues des
+mesures actuelles sont :
+
+| Besoin | Profil de départ | Pourquoi |
+|---|---|---|
+| validation initiale ou faible trafic | `32k` | chemin le plus simple, une requête |
+| sous-agents et requêtes simultanées | `128k-batch4` | bon TTFT et 31,5 tok/s agrégés mesurés |
+| un flux interactif prioritaire | `128k-batch4-mtp` | environ 29 tok/s en mono-flux |
+| diagnostic CUDA Graphs | `32k-eager` | retire uniquement les graphes |
+| contexte réel proche de 256K | `256k-mtp` | expérimental jusqu'au passage froid à 240K |
+| contexte supérieur à 256K | `512k-mtp-eager` puis `512k-mtp-cp` | expériences, pas profils de production validés |
+
+MTP accélère fortement un seul décode, mais dégrade le TTFT lors de rafales
+concurrentes. Pour plusieurs sous-agents, préférez donc `128k-batch4` sans MTP.
+
+Pour changer de profil, arrêtez toujours les deux rangs avant le redémarrage :
+
+```bash
+./stop-glm53.sh --profile 32k
+./start-glm53.sh 128k-batch4
+./status-glm53.sh 128k-batch4
+./smoke-glm53.sh --profile 128k-batch4 --tools
+./bench-glm53.py --runs 3 --concurrency 4
+```
+
+Avant d'annoncer une capacité de contexte, testez-la avec un vrai prompt froid.
+Par exemple, pour le candidat `256k-mtp` :
+
+```bash
+./status-glm53.sh 256k-mtp
+./bench-long-context.py --target-tokens 240000 --cold --label 256k-mtp
+./status-glm53.sh 256k-mtp
+```
+
+La capacité n'est validée que si `ok=True`, les trois aiguilles sont retrouvées
+et l'API reste saine après la requête. Un petit benchmark lancé avec une limite
+serveur à 256K ne prouve pas que 240K tokens réels fonctionnent.
+
+### Checklist avant exposition en production
+
+- générez un secret long, par exemple avec `openssl rand -hex 32`, puis activez
+  `API_KEY` dans `.env.glm53` et configurez la même valeur dans chaque client ;
+- limitez le port `8888/tcp` au réseau de confiance avec le pare-feu du head ;
+- conservez `.env.glm53` en permission `0600` et hors de Git ;
+- gardez les pins du modèle et de l'image inchangés ; `prepare-glm53.sh` bloque
+  volontairement une dérive non auditée ;
+- conservez `RESTART_POLICY=no` : un seul rang ne doit pas redémarrer isolément.
+  Après un reboot, attendez le réseau, Docker et SSH, puis relancez le profil
+  choisi avec `start-glm53.sh` depuis le head ;
+- surveillez les deux rangs, `/v1/models`, le tokenizer et une petite génération,
+  pas seulement l'ouverture du port HTTP ;
+- archivez le JSON du benchmark accepté et le nom exact du profil déployé.
+
+`API_HOST=0.0.0.0` est nécessaire au fonctionnement de cette recette entre les
+nœuds. La protection doit donc être assurée par la clé API et le filtrage réseau,
+pas en remplaçant cette valeur par `127.0.0.1`.
+
+## Exploitation courante
+
+```bash
+# État des deux rangs, de /v1/models et du tokenizer
+./status-glm53.sh 128k-batch4
+
+# Journaux récents du head et du worker
+./logs-glm53.sh --profile 128k-batch4 --node both --tail 300
+
+# Test chat + tool calling
+./smoke-glm53.sh --profile 128k-batch4 --tools
+
+# Arrêt coordonné des deux rangs
+./stop-glm53.sh --profile 128k-batch4
+```
+
+Pour suivre les logs, sélectionnez un seul nœud. Interrompre cette commande de
+suivi avec `Ctrl+C` ne doit pas être confondu avec l'arrêt du service :
+
+```bash
+./logs-glm53.sh --profile 128k-batch4 --node head --tail 300 --follow
+```
+
+Un journal contenant `SIGTERM received` indique qu'une commande externe a
+demandé l'arrêt. Ce n'est pas, à lui seul, un crash CUDA.
 
 ## Architecture
 
@@ -17,149 +297,53 @@ start-glm53.sh ─────── SSH, worker-first ───────► 
       └── http://HEAD:8888/v1  (API sur le head uniquement)
 ```
 
-Chaque nœud conserve une copie complète du checkpoint, soit environ 181,3 GiB sur disque. SGLang répartit ensuite les tenseurs entre les deux rangs, pour une charge idéale d'environ 90,64 GiB de poids indexés par nœud.
+Chaque nœud conserve le checkpoint complet sur disque. Au chargement, SGLang
+répartit environ 181,3 GiB de tenseurs entre les deux rangs, soit une charge
+idéale proche de 90,64 GiB de poids indexés par nœud. Le head synchronise la
+configuration, valide les snapshots, démarre le worker en premier, lance son
+propre rang, attend l'API et exécute le smoke test automatique.
 
-Le démarrage est coordonné depuis le head : synchronisation de la recette, validation locale du checkpoint sur les deux machines, lancement du worker, lancement du head, attente de l'API puis smoke test automatique.
+### Migration depuis l'ancienne recette vLLM
 
-## Prérequis
-
-- 2× NVIDIA DGX Spark, Lenovo ThinkStation PGX ou autre machine GB10 (`aarch64`, `sm_121`) ;
-- driver compatible CUDA 13, Docker et plugin `docker compose` v2 ;
-- Python 3 et `curl` sur le head ;
-- lien RoCE fonctionnel entre les deux machines ;
-- connexion SSH non interactive du head vers le worker ;
-- au moins 205 GiB libres dans le cache Hugging Face de chaque nœud ;
-- swap désactivé de préférence pendant la mise en service initiale.
-
-La recette ne devine volontairement pas la topologie réseau. Reprenez les IP, interfaces, HCA et index GID d'une configuration TP=2 déjà fonctionnelle sur ces deux machines — par exemple votre déploiement DeepSeek existant.
-
-## Installation
-
-Toutes les commandes suivantes s'exécutent sur le head.
-
-### Migration depuis la première version vLLM
-
-Si votre `.env.glm53` contient encore `GLM53_VLLM_IMAGE` ou `NCCL_IB_GID_INDEX`, repartez du nouvel exemple :
+Si `.env.glm53` contient encore `GLM53_VLLM_IMAGE` ou `NCCL_IB_GID_INDEX`, ne
+le corrigez pas morceau par morceau. Repartez de l'exemple courant :
 
 ```bash
 cp .env.glm53 .env.glm53.before-sglang
 cp .env.glm53.example .env.glm53
+chmod 600 .env.glm53
 $EDITOR .env.glm53
 ```
 
-Recopiez uniquement vos paramètres SSH, chemins de cache et valeurs réseau confirmées. Conservez les nouveaux pins `MODEL_REVISION` et `GLM53_RUNTIME_IMAGE`, ne recopiez pas l'ancien index GID, puis passez directement à l'étape 2.
-
-### 1. Configurer le cluster
-
-Pour une installation neuve :
-
-```bash
-cp .env.glm53.example .env.glm53
-$EDITOR .env.glm53
-```
-
-Renseignez au minimum :
-
-- `WORKER_HOST` et `WORKER_DIR` ;
-- `MASTER_ADDR`, `HEAD_FABRIC_IP` et `WORKER_FABRIC_IP` ;
-- les interfaces `NCCL`, `TP` et `GLOO` ;
-- le HCA RoCE et `NCCL_IB_ADDR_RANGE`.
-
-Les identifiants du modèle, sa révision et l'image SGLang sont déjà épinglés. Ne les modifiez qu'après un nouvel audit. Avec NCCL ≥ 2.21, ne définissez pas `NCCL_IB_GID_INDEX` : le GID RoCE v2 est sélectionné dynamiquement.
-
-### 2. Valider l'environnement
-
-```bash
-./validate-glm53.sh --config-only
-./doctor-glm53.sh
-```
-
-Le doctor contrôle notamment l'architecture ARM64, le GPU, Docker, la mémoire disponible, le cache, les interfaces réseau, le HCA et le GID sur les deux nœuds.
-
-### 3. Préparer l'image et le checkpoint
-
-```bash
-./prepare-glm53.sh
-```
-
-Cette commande :
-
-1. vérifie que les révisions distantes et le digest de l'image correspondent toujours à l'audit ;
-2. synchronise la recette vers le worker ;
-3. tire l'image SGLang épinglée sur les deux nœuds ;
-4. télécharge le snapshot complet sur chacun ;
-5. valide les 120 shards et les métadonnées de quantification.
-
-Le téléchargement est séquentiel par défaut afin de ménager un accès Internet partagé. Pour deux accès indépendants :
-
-```bash
-PREPARE_PARALLEL=1 ./prepare-glm53.sh
-```
-
-### 4. Effectuer le premier démarrage
-
-```bash
-./start-glm53.sh 32k
-```
-
-Le script démarre le worker en premier, active un garde mémoire sur chaque nœud et attend jusqu'à une heure que l'API réponde. Le démarrage est considéré comme réussi uniquement si le smoke test obtient `GLM53_OK`.
-
-L'API est alors disponible à l'adresse :
-
-```text
-http://<HEAD_FABRIC_IP>:8888/v1
-```
-
-Si l'un des deux rangs tombe avant la readiness, les logs sont collectés et les deux conteneurs sont arrêtés automatiquement.
-
-## Exploitation courante
-
-```bash
-# État des deux rangs et de l'API
-./status-glm53.sh 32k
-
-# Logs récents du head et du worker
-./logs-glm53.sh --profile 32k --node both --tail 300
-
-# Test chat + tool calling
-./smoke-glm53.sh --profile 32k --tools
-
-# Arrêt coordonné
-./stop-glm53.sh --profile 32k
-```
-
-Pour suivre les logs en continu, sélectionnez un seul nœud :
-
-```bash
-./logs-glm53.sh --profile 32k --node head --tail 300 --follow
-```
+Recopiez uniquement les paramètres SSH, les chemins de cache et les valeurs
+réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 
 ## Profils de lancement
 
-| Profil | Contexte | Requêtes | MoE | Graphes | MTP | Usage recommandé |
+| Profil | Contexte | Requêtes | MoE | Graphes | MTP | Usage / état |
 |---|---:|---:|---|---|---:|---|
 | `32k` | 32 768 | 1 | FlashInfer CUTLASS | oui | non | premier démarrage |
+| `32k-eager` | 32 768 | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
+| `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | MTP mesuré à environ 29 tok/s |
 | `32k-batch4` | 32 768 | 4 | FlashInfer CUTLASS | oui | non | sous-agents OpenCode |
 | `32k-batch8` | 32 768 | 8 | FlashInfer CUTLASS | oui | non | concurrence élevée, expérimental |
 | `64k` | 65 536 | 1 | FlashInfer CUTLASS | oui | non | deuxième étape |
 | `128k` | 131 072 | 1 | FlashInfer CUTLASS | oui | non | long contexte mono-requête |
-| `128k-batch4` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | sous-agents sur longs contextes |
-| `128k-batch4-8k` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | prefill 8192 : drain accéléré des rafales |
-| `128k-batch4-mtp` | 131 072 | 4 | FlashInfer CUTLASS | oui | 5 étapes | longs contextes + concurrence + MTP |
-| `128k-batch4-mtp3` | 131 072 | 4 | FlashInfer CUTLASS | oui | 3 étapes | MTP batché : TTFT réduit, gain conservé |
-| `128k-batch2-mtp` | 131 072 | 2 | FlashInfer CUTLASS | oui | 5 étapes | compromis interactif MTP |
+| `128k-batch4` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | mesuré, conseillé pour les sous-agents |
+| `128k-batch4-8k` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | prefill 8192 expérimental |
+| `128k-batch4-mtp` | 131 072 | 4 | FlashInfer CUTLASS | oui | 5 étapes | mono-flux mesuré ×2, mauvais p99 en rafale |
+| `128k-batch4-mtp3` | 131 072 | 4 | FlashInfer CUTLASS | oui | 3 étapes | compromis MTP batché à mesurer |
+| `128k-batch2-mtp` | 131 072 | 2 | FlashInfer CUTLASS | oui | 5 étapes | compromis interactif à mesurer |
 | `128k-batch8` | 131 072 | 8 | FlashInfer CUTLASS | oui | non | longs contextes + forte concurrence |
-| `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | TP pur (EP=1) vs all-to-all EP=2 |
-| `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | MTP + EP=1, ablation communication |
-| `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | MTP + torch.compile bs=1 |
-| `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
-| `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | 256k avec CUDA graphs bs=1 |
-| `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | long contexte maximal + décode ×2 |
-| `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | KV BF16 + CP=2, témoin qualité stricte |
-| `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | >256k sûr, sans replay CUDA graph |
-| `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | >256k rapide, préfill CP=2 expérimental |
-| `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
-| `32k-eager` | 32 768 | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
+| `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | ablation TP/EP expérimentale |
+| `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation MTP + EP=1 expérimentale |
+| `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation torch.compile expérimentale |
+| `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | sonde mémoire eager, expérimental |
+| `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | capture bs=1 validée, préfill froid non validé |
+| `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | candidat 240K froid, expérimental |
+| `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | témoin KV BF16 + CP=2, expérimental |
+| `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | évite le replay graph >256K, à valider |
+| `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | préfill CP=2 expérimental, à valider |
 
 Les noms de profils sont des abréviations : `128k` correspond à `MAX_MODEL_LEN=131072`, soit 131 072 tokens (128 × 1024).
 
@@ -170,7 +354,10 @@ Arrêtez toujours le profil actif avant d'en charger un autre :
 ./start-glm53.sh 32k-batch4
 ```
 
-Progressez dans l'ordre `32k` → `64k` → `128k` → `256k`, puis testez MTP. Utilisez `32k-eager` uniquement pour isoler un problème de capture ou de replay CUDA graphs.
+Pour augmenter la fenêtre, progressez dans l'ordre `32k` → `64k` → `128k` →
+`256k` et validez chaque palier. Pour tester MTP, comparez d'abord `32k` à
+`32k-mtp`, puis transposez le réglage au contexte voulu. Utilisez `32k-eager`
+uniquement pour isoler un problème de capture ou de replay CUDA graphs.
 
 ## Concurrence et sous-agents
 
@@ -186,7 +373,7 @@ Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte 
 
 Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes.
 
-Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Cette distinction est importante car [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit un crash au premier token de décode au-delà de 262 144 tokens lorsque les graphes sont actifs. `512k-mtp-eager` est le chemin sûr sans graphes. `512k-mtp-cp` répartit le préfill DSA sur les deux rangs (`CP=2`, interleave) afin de garder environ 240k tokens/rang pour un test froid à 480k ; il reste expérimental jusqu'au passage du benchmark long-contexte. `384k-quality` remplace le KV FP8 par du BF16 pour mesurer le coût d'une politique sans compression KV supplémentaire.
+Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Cette distinction est importante car [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit un crash au premier token de décode au-delà de 262 144 tokens lorsque les graphes sont actifs. `512k-mtp-eager` évite ce chemin de replay en désactivant les graphes, sans constituer pour autant une validation 512K. `512k-mtp-cp` répartit le préfill DSA sur les deux rangs (`CP=2`, interleave) afin de garder environ 240k tokens/rang pour un test froid à 480k ; il reste expérimental jusqu'au passage du benchmark long-contexte. `384k-quality` remplace le KV FP8 par du BF16 pour mesurer le coût d'une politique sans compression KV supplémentaire.
 
 Pour dépasser les ~29 tok/s mono-flux sans changer les poids ni la politique d'échantillonnage, `128k-mtp-ep1` isole un autre motif de communication MoE et `128k-mtp-compile` isole la compilation bs=1. Ils doivent être comparés séparément au profil MTP5 de référence ; une combinaison n'est justifiée que si chaque ablation gagne seule.
 
@@ -217,6 +404,9 @@ Par défaut, SGLang écoute sur `0.0.0.0` afin que le worker puisse observer la 
 ## Benchmark
 
 Le benchmark intégré mesure le TTFT, la durée totale et le débit de décodage en streaming. Le contenu généré n'est pas conservé, seulement son hash :
+
+Si l'API est protégée, exportez d'abord `API_KEY` avec la valeur configurée dans
+`.env.glm53`.
 
 ```bash
 ./bench-glm53.py --runs 3
