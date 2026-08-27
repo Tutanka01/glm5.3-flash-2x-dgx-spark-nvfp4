@@ -144,6 +144,7 @@ Pour suivre les logs en continu, sélectionnez un seul nœud :
 | `64k` | 65 536 | 1 | FlashInfer CUTLASS | oui | non | deuxième étape |
 | `128k` | 131 072 | 1 | FlashInfer CUTLASS | oui | non | long contexte mono-requête |
 | `128k-batch4` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | sous-agents sur longs contextes |
+| `128k-batch4-mtp` | 131 072 | 4 | FlashInfer CUTLASS | oui | 5 étapes | longs contextes + concurrence + MTP |
 | `128k-batch8` | 131 072 | 8 | FlashInfer CUTLASS | oui | non | longs contextes + forte concurrence |
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
 | `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
@@ -171,6 +172,8 @@ Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un ch
 - si le garde mémoire se déclenche ou que le préfill échoue sur `32k-batch8`, revenez à `32k-batch4` ou remettez `MAX_NUM_BATCHED_TOKENS=4096`.
 
 Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
+
+Le MTP reste le levier le moins validé de la recette (correctifs draft NEXTN supplémentaires) et n'est activé nulle part ailleurs que dans `32k-mtp` et `128k-batch4-mtp`. Le profil `256k` est incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées. Validez chaque brique séparément (`32k-mtp` puis `128k-batch4`) avant de charger la combinaison.
 
 Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark).
 
@@ -221,7 +224,7 @@ export ZAI_API_KEY='...'
   --compare-model 'glm-5.3-flash'
 ```
 
-Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de qualité sérieuse doit conserver les mêmes prompts, températures, budgets de tokens et tâches agentiques des deux côtés.
+Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de qualité sérieuse doit conserver les mêmes prompts, températures, budgets de tokens et tâches agentiques des deux côtés. Les mesures marquantes sont archivées dans [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Reproductibilité et garde-fous
 
@@ -254,6 +257,7 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 
 - [audit du checkpoint](docs/AUDIT.md) ;
 - [configuration et diagnostic RoCE](docs/NETWORK.md) ;
+- [historique des benchmarks](docs/BENCHMARKS.md) ;
 - [guide de dépannage](docs/TROUBLESHOOTING.md) ;
 - [crédits et inspirations](CREDITS.md).
 
