@@ -29,6 +29,29 @@ class BenchmarkError(RuntimeError):
     pass
 
 
+class TokenizerProbeError(BenchmarkError):
+    """Tokenizer discovery failed, optionally for a transient server reason."""
+
+    def __init__(self, message: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+RETRYABLE_HTTP_CODES = frozenset((408, 425, 429, 500, 502, 503, 504))
+
+
+def describe_http_error(exc: urllib.error.HTTPError) -> str:
+    detail = f"HTTP {exc.code} {exc.reason}"
+    try:
+        body = exc.read(512).decode("utf-8", errors="replace").strip()
+    except OSError:
+        body = ""
+    if body:
+        compact = " ".join(body.split())
+        detail += f": {compact}"
+    return detail
+
+
 def request_json(
     url: str,
     payload: dict[str, Any] | None,
@@ -77,17 +100,106 @@ def discover_tokenizer(
         (f"{root}/tokenize", lambda text: {"text": text}),
         (f"{root}/tokenize", lambda text: {"model": model, "text": text}),
     ]
-    failures: list[str] = []
+    failures: dict[str, list[str]] = {}
+    retryable = False
     for url, make_payload in candidates:
         try:
             response = request_json(url, make_payload("tokenizer probe"), api_key, timeout)
             count_token_payload(response)
             return url, make_payload
-        except (BenchmarkError, OSError, ValueError, urllib.error.URLError) as exc:
-            failures.append(f"{url}: {exc}")
-    raise BenchmarkError(
-        "no compatible SGLang tokenizer endpoint found; tried: " + "; ".join(failures)
+        except urllib.error.HTTPError as exc:
+            retryable = retryable or exc.code in RETRYABLE_HTTP_CODES
+            failures.setdefault(url, []).append(describe_http_error(exc))
+        except (OSError, urllib.error.URLError) as exc:
+            retryable = True
+            failures.setdefault(url, []).append(str(exc))
+        except (BenchmarkError, ValueError) as exc:
+            failures.setdefault(url, []).append(str(exc))
+
+    details = []
+    for url, reasons in failures.items():
+        unique_reasons = list(dict.fromkeys(reasons))
+        details.append(f"{url}: {' | '.join(unique_reasons)}")
+    if retryable:
+        message = "SGLang tokenizer/engine is temporarily unavailable; tried: "
+    else:
+        message = "no compatible SGLang tokenizer endpoint found; tried: "
+    raise TokenizerProbeError(
+        message + "; ".join(details),
+        retryable=retryable,
     )
+
+
+def model_api_status(
+    base_url: str,
+    model: str | None,
+    api_key: str | None,
+    timeout: int,
+) -> tuple[bool, str]:
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    url = f"{base_url.rstrip('/')}/models"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        return False, describe_http_error(exc)
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        return False, str(exc)
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return False, "HTTP 200 with an invalid /models response"
+    ids = [item.get("id") for item in payload["data"] if isinstance(item, dict)]
+    if model is not None and model not in ids:
+        return False, f"HTTP 200, but served model ids are {ids}"
+    return True, f"HTTP 200, served model ids are {ids}"
+
+
+def wait_for_tokenizer(
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    request_timeout: int,
+    readiness_timeout: int,
+) -> tuple[str, Callable[[str], dict[str, Any]]]:
+    started = time.monotonic()
+    deadline = started + readiness_timeout
+    last_error: TokenizerProbeError | None = None
+    last_model_status = "not checked"
+    announced = False
+
+    while True:
+        try:
+            return discover_tokenizer(base_url, model, api_key, request_timeout)
+        except TokenizerProbeError as exc:
+            last_error = exc
+            _, last_model_status = model_api_status(
+                base_url, model, api_key, min(request_timeout, 10)
+            )
+            remaining = deadline - time.monotonic()
+            if not exc.retryable or remaining <= 0:
+                break
+            if not announced:
+                print(
+                    "SGLang answered but its tokenizer/engine is not ready; "
+                    f"waiting up to {readiness_timeout}s (/models: {last_model_status})",
+                    file=sys.stderr,
+                )
+                announced = True
+            time.sleep(min(2.0, remaining))
+
+    assert last_error is not None
+    elapsed = time.monotonic() - started
+    if last_error.retryable:
+        raise BenchmarkError(
+            f"SGLang did not become usable after {elapsed:.1f}s. "
+            f"/models: {last_model_status}. Tokenizer: {last_error}. "
+            "HTTP 503 means the HTTP front end is reachable but the inference "
+            "engine is loading, stopping, or no longer alive; inspect "
+            "./status-glm53.sh and both rank logs before retrying."
+        )
+    raise BenchmarkError(f"{last_error}. /models: {last_model_status}")
 
 
 def make_context(repeats: int) -> str:
@@ -234,18 +346,8 @@ def stream_chat(
 
 
 def api_is_healthy(base_url: str, api_key: str | None, timeout: int) -> bool:
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/models", headers=headers, method="GET"
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-        return isinstance(payload, dict) and isinstance(payload.get("data"), list)
-    except (OSError, ValueError, urllib.error.URLError):
-        return False
+    healthy, _ = model_api_status(base_url, None, api_key, timeout)
+    return healthy
 
 
 def main() -> int:
@@ -257,6 +359,12 @@ def main() -> int:
     parser.add_argument("--api-key-env", default="API_KEY")
     parser.add_argument("--target-tokens", type=int, required=True)
     parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument(
+        "--readiness-timeout",
+        type=int,
+        default=60,
+        help="seconds to retry transient tokenizer/API failures before aborting",
+    )
     parser.add_argument("--cold", action="store_true", help="flush SGLang radix cache first")
     parser.add_argument("--label", default="long-context")
     parser.add_argument("--output", type=Path)
@@ -265,10 +373,16 @@ def main() -> int:
         parser.error("--target-tokens must be between 1024 and 1048000")
     if args.timeout < 30:
         parser.error("--timeout must be at least 30 seconds")
+    if args.readiness_timeout < 0:
+        parser.error("--readiness-timeout must be non-negative")
 
     api_key = os.environ.get(args.api_key_env)
-    tokenizer_url, make_tokenizer_payload = discover_tokenizer(
-        args.base_url, args.model, api_key, min(args.timeout, 120)
+    tokenizer_url, make_tokenizer_payload = wait_for_tokenizer(
+        args.base_url,
+        args.model,
+        api_key,
+        min(args.timeout, 30),
+        args.readiness_timeout,
     )
 
     def tokenize(text: str) -> int:

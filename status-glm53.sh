@@ -40,6 +40,17 @@ else
   printf 'API not ready\n'
 fi
 
+TOKENIZER_TMP="$(mktemp /tmp/glm53-tokenizer-status.XXXXXX)"
+trap 'rm -f "$STATUS_TMP" "$TOKENIZER_TMP"' EXIT
+if GLM53_CURL_MAX_TIME=30 glm53_api_curl \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"$SERVED_MODEL_NAME\",\"prompt\":\"status probe\"}" \
+  "http://127.0.0.1:${API_PORT}/v1/tokenize" > "$TOKENIZER_TMP" 2>/dev/null; then
+  printf 'tokenizer ready\n'
+else
+  printf 'tokenizer not ready (the HTTP front end may be loading or shutting down)\n'
+fi
+
 guard_log="$ROOT_DIR/.glm53-guard-head.log"
 if [ -f "$guard_log" ]; then
   printf '\n===== HEAD guard (last 5 lines) =====\n'

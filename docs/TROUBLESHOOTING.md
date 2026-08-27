@@ -74,6 +74,26 @@ Arrêtez-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actif
 
 Les anciennes versions utilisaient `/health` pour le garde mémoire et le healthcheck Docker. Sur ce runtime, cet endpoint peut déclencher une passe synthétique de 64 tokens ; avec une seule requête active, les sondes répétées pouvaient retarder `/v1/models` indéfiniment. La recette utilise désormais uniquement `/v1/models`, avec un délai de 30 secondes, et vérifie que l'identifiant servi est exactement celui attendu.
 
+## Le benchmark long-contexte reçoit `HTTP 503` sur `/tokenize`
+
+Un `503 Service Unavailable` ne signifie pas que la route tokenizer est
+incompatible. Il signifie que le frontal HTTP répond encore, mais que le moteur
+d'inférence est en chargement, en cours d'arrêt, ou n'est plus vivant. Vérifiez
+l'état des deux rangs avant de relancer le benchmark :
+
+```bash
+./status-glm53.sh 256k-mtp
+./logs-glm53.sh --profile 256k-mtp --node both --tail 200
+```
+
+Le client long-contexte réessaie désormais ces erreurs transitoires pendant
+60 secondes et affiche séparément l'état de `/v1/models`. Un journal contenant
+`SIGTERM received`, puis `SystemExit: 0`, décrit un arrêt externe propre et non
+un crash de kernel. Relancez `./start-glm53.sh 256k-mtp`, attendez son message
+final indiquant que l'API est prête, confirmez `tokenizer ready` avec la commande
+de statut, puis lancez le benchmark. N'exécutez pas `stop-glm53.sh`,
+`docker compose stop/down` ou un arrêt de conteneur pendant le test.
+
 ## `Permission denied` dans `/cache/huggingface`
 
 Le chemin `/cache/huggingface` est le cache hôte monté dans le conteneur. Si un ancien conteneur lancé en root a créé le dossier du modèle, rendez uniquement ce dossier et son dossier de verrous au compte qui exécute la recette :
