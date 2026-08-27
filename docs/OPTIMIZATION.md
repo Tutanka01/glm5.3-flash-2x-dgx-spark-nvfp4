@@ -12,7 +12,7 @@ mention explicite.
 |---|---|
 | ~273 Go/s de bande passante LPDDR5X partagés CPU/GPU | le décode est borné par la mémoire : la quantification (octets/token) et la spéculation (tokens/lecture) sont les deux seuls leviers structurels |
 | 119,6 Go de mémoire unifiée, poids ~90,6 Go/nœud en TP=2 | TP=2 est obligatoire ; pas de réplique DP par nœud (181,3 GiB > 128 Go) |
-| `sm_121` (GB10) | pas de KV cache NVFP4 (exige `sm100f`) : FP8 e4m3 est le plancher et le plafond |
+| `sm_121` (GB10) | pas de KV cache NVFP4 : FP8 e4m3 est le format compact disponible ; BF16 reste le témoin qualité |
 | Lien RoCE point-à-point entre les nœuds | chaque all-reduce/all-to-all paie une latence ~40 µs, multipliée par couches × steps |
 
 ## Méthodologie
@@ -44,15 +44,26 @@ Ces profils ne nécessitent aucune modification du compose ou du `.env` :
 | `128k-batch4-mtp3` | TTFT batché sous MTP | 3 étapes de spéculation raccourcissent les frontières de batch et réduisent le p99 de 45 s sans effacer le gain de décode |
 | `128k-batch2-mtp` | compromis interactif | 2 requêtes concurrentes avec MTP 5 étapes : point d'équilibre entre 29 tok/s mono et le collapse TTFT à c=4 |
 | `128k-batch4-8k` | drain des prefills longs | `MAX_NUM_BATCHED_TOKENS=8192` divise par deux les rounds de préfill ; surveiller le garde mémoire |
-| `256k-graphs` | décode à 256k | la capture bs=1 est petite : réactiver les CUDA graphs à 262 144 tokens restaure le décode perdu en mode eager |
+| `128k-mtp-ep1` | décode mono, motif de communication | combine MTP5/graphs avec EP=1 pour mesurer all-reduce TP contre all-to-all EP=2 |
+| `128k-mtp-compile` | décode mono compilé | combine MTP5/graphs avec torch.compile borné à bs=1 ; démarrage plus long |
+| `256k-graphs` | décode court avec limite 256k | ✅ 14,4 tok/s sur petits prompts ; capture bs=1 validée, capacité froide 256k non testée |
+| `256k-mtp` | première marche MTP à 256k | combine graphs bs=1 et MTP 5 étapes ; exécuter le test froid à 240k avant adoption |
+| `384k-quality` | >256k sans compression KV supplémentaire | KV BF16, MTP, graphs et préfill CP=2 ; cible froide initiale 360k |
+| `512k-mtp-eager` | >256k robuste | MTP 5, graphes désactivés ; contourne le crash amont >262k au prix du décode eager |
+| `512k-mtp-cp` | >256k rapide | MTP + graphs, préfill DSA partagé sur 2 rangs ; cible 480k (~240k/rang) |
 | `128k-ep1` | latence MoE | EP=1 (all-reduce pur) contre EP=2 (all-to-all sur RoCE) : même calcul, seul le motif de communication change |
 
 Notes :
 
-- le décodage spéculatif (MTP/NEXTN) est **lossless** : le modèle cible vérifie
-  chaque token drafté. Ajuster `MTP_NUM_TOKENS` ne change pas la qualité ;
-- `256k-graphs` : si la capture OOM, baissez `MEM_FRACTION_STATIC` à 0,88 ou
-  retombez sur `256k` (eager) ;
+- le décodage spéculatif (MTP/NEXTN) est **lossless par construction** : le
+  modèle cible vérifie chaque token drafté. Ajuster `MTP_NUM_TOKENS` ne crée pas
+  une nouvelle quantification ; le smoke et les tests déterministes restent
+  obligatoires pour détecter un bug d'implémentation ;
+- `256k-graphs` et `256k-mtp` : si la capture OOM, baissez
+  `MEM_FRACTION_STATIC` à 0,88 ou retombez sur `256k` (eager) ;
+- une limite configurée n'alloue pas `contexte × requêtes` de KV à l'avance :
+  SGLang remplit un pool issu de la mémoire restante. Comparez la ligne
+  `KV cache pool` des logs et testez une vraie requête longue ;
 - `128k-ep1` : EP=2 reste la configuration auditée. Si `128k-ep1` ne démarre
   pas ou produit un smoke test incohérent, l'image épinglée ne couvre pas ce
   chemin — n'insistez pas.
@@ -69,17 +80,14 @@ fichier). Les défauts reproduisent exactement le comportement validé :
 | `ENABLE_TORCH_COMPILE` | `0` | `1` = torch.compile sur le chemin de décode (`TORCH_COMPILE_MAX_BS` borne le batch compilé) | nul ; démarrage plus long |
 | `ENABLE_MIXED_CHUNK` | `0` | `1` = mélange des chunks de prefill aux batches de décode (TTFT batché sans MTP) | incompatible avec MTP : le validateur refuse la combinaison |
 | `SCHEDULE_CONSERVATIVENESS` | `1.0` | > 1.0 = admission plus conservatrice, évite les retracts si les logs montrent « KV cache pool is full » | nul |
-| `SGLANG_ENABLE_SPEC_V2` | `0` | `1` = overlap scheduler sous spéculation ; cible directement le problème d'admission des prefills sous MTP | expérimental : exige `topk=1` (notre cas) ; mesurer avant adoption |
+| `ENABLE_PREFILL_CP` | `0` | `1` + `ATTN_CP_SIZE=2` partage le long préfill DSA entre les deux rangs | expérimental sur ce runtime ; test froid obligatoire |
+| `CP_STRATEGY` | `interleave` | distribution round-robin des tokens, compatible multi-batch dans SGLang | garder `interleave` pour le premier audit |
 
-Exemple — essai combiné reproductible :
-
-```bash
-cp profiles/128k-batch4-mtp.env profiles/essai-mtp-specv2.env
-printf 'SGLANG_ENABLE_SPEC_V2=1\n' >> profiles/essai-mtp-specv2.env
-./stop-glm53.sh --profile 128k-batch4-mtp
-./start-glm53.sh essai-mtp-specv2
-./bench-glm53.py --runs 3 --concurrency 4
-```
+La révision SGLang épinglée exécute déjà tous les workers EAGLE/NEXTN avec Spec
+V2 et l'overlap scheduler. L'ancienne variable `SGLANG_ENABLE_SPEC_V2` y est
+retirée : la définir n'active rien et produit seulement un avertissement. Le
+TTFT batché mesuré à 45 s p99 inclut donc déjà Spec V2 ; les leviers utiles sont
+la profondeur MTP, la concurrence et la politique d'admission.
 
 Surveillance utile pendant les mesures :
 
@@ -87,6 +95,33 @@ Surveillance utile pendant les mesures :
   MTP ; < 3 → les étapes hautes sont du gaspillage ;
 - « retract » ou « KV cache pool is full » → montez
   `SCHEDULE_CONSERVATIVENESS` (1.3 est un bon premier pas).
+
+## Palier long-contexte : capacité réelle, pas limite déclarée
+
+Le checkpoint annonce 1 048 576 tokens nativement : aucun RoPE scaling n'est
+nécessaire jusqu'à cette limite. En revanche, deux limites d'exécution sont
+distinctes :
+
+1. le nombre de tokens du pool KV réellement alloué après chargement/capture ;
+2. le chemin de CUDA graph replay. [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550)
+   reproduit un abort au premier token après un préfill froid >262 144, alors
+   que le même prompt passe en eager. Le ticket montre aussi que le préfill CP=2
+   masque le défaut au moins jusqu'à 428k en divisant la longueur vue par rang.
+
+Le profil rapide ne doit donc pas être validé avec `bench-glm53.py`, dont les
+prompts sont courts, mais avec :
+
+```bash
+./start-glm53.sh 512k-mtp-cp
+./bench-long-context.py --target-tokens 300000 --cold --label 512k-mtp-cp-300k
+./bench-long-context.py --target-tokens 400000 --cold --label 512k-mtp-cp-400k
+./bench-long-context.py --target-tokens 480000 --cold --label 512k-mtp-cp-480k
+```
+
+Le client place trois aiguilles, enregistre le nombre de tokens réellement vu
+après le template, et vérifie la santé du serveur après la réponse. Si un palier
+échoue ou tue un rang, conservez les logs et passez à `512k-mtp-eager`. Le profil
+eager garde MTP : il sacrifie le gain de capture, pas la vérification des tokens.
 
 ## Niveau 3 — fabric RoCE
 
@@ -135,13 +170,10 @@ vide ou absente laisse NCCL à son comportement par défaut validé
   `SGLANG_OPT_DEEPGEMM_HC_PRENORM` (cassés sur `sm_121` dans l'image épinglée).
   Une image suivante peut les réactiver : ne le faites que via une nouvelle
   ligne d'audit dans [AUDIT.md](AUDIT.md), pins digest à l'appui.
-- **Requantification du `lm_head`** : sur GB10, un `lm_head` resté en BF16 est
-  relu à chaque step de décode ; sa quantification NVFP4 isolée a montré
-  jusqu'à +47 % de décode sur un modèle comparable. Vérifiez d'abord si le
-  checkpoint l'exclut déjà de la quantification (`quantization_config.ignore`,
-  cf. [AUDIT.md](AUDIT.md)). Une requantification complète OOMerait la mémoire
-  unifiée ; seul le tenseur (~21 Go au pic) se re-quantifie. Exige une
-  comparaison qualité A/B contre l'API officielle avant adoption.
+- **Requantification du `lm_head`** : levier de vitesse possible, mais il ajoute
+  une approximation précisément sur la projection de sortie. Il est exclu de
+  cet ordre de bataille puisque l'objectif impose zéro nouveau compromis
+  qualité.
 - **Extension de contexte au-delà de la limite native** (RoPE/YaRN) : dégrade
   la qualité de façon mesurable. La limite native du checkpoint est le plafond
   assumé de cette recette ; `MAX_MODEL_LEN` ne doit pas la dépasser.
@@ -162,22 +194,32 @@ vide ou absente laisse NCCL à son comportement par défaut validé
 |---|---|
 | MTP (toutes valeurs de `MTP_NUM_TOKENS`) | lossless (vérification par le modèle cible) |
 | CUDA graphs, torch.compile, chunked prefill, conservativeness | lossless |
+| Préfill context parallel | même modèle/calcul ; ordre de réduction différent, test numérique obligatoire |
 | EP=1 vs EP=2 | lossless (même calcul, autre communication) |
 | NCCL / RoCE / MTU | lossless |
-| `SGLANG_ENABLE_SPEC_V2` | lossless en distribution ; à valider numériquement |
-| KV FP8 e4m3 | déjà le socle validé de la recette |
-| Requantification `lm_head` | risque faible, A/B obligatoire |
+| KV FP8 e4m3 | compression numérique déjà présente dans le socle rapide ; pas strictement équivalente au BF16 |
+| KV BF16 (`384k-quality`) | aucune quantification KV supplémentaire ; capacité environ réduite |
+| Requantification `lm_head` | perte potentielle : exclue |
 | RoPE/YaRN au-delà de la limite native | risque réel : exclu |
 
 ## Ordre de bataille recommandé
 
-1. `256k-graphs` — plus gros gain dormant, zéro risque qualité ;
-2. balayage `MTP_NUM_TOKENS` ∈ {2, 3, 4} à c=1 puis c=4 (profils
+1. `256k-mtp` — test froid à 240k, puis benchmark court pour confirmer le gain
+   de MTP avec capture ;
+2. `512k-mtp-eager` — paliers froids 300k → 400k → 480k : référence robuste
+   au-delà du bug de replay ;
+3. `512k-mtp-cp` — mêmes paliers avec graphs + CP=2, puis comparaison directe
+   du TTFT et du décode au profil eager ;
+4. `384k-quality` — test froid 360k en KV BF16 et comparaison de qualité/vitesse
+   au socle FP8 ;
+5. `128k-mtp-ep1`, puis `128k-mtp-compile` — deux ablations mono-flux contre
+   la référence MTP5 à ~29 tok/s ; ne les combinez que si chacune gagne seule ;
+6. balayage `MTP_NUM_TOKENS` ∈ {2, 3, 4} à c=1 puis c=4 (profils
    `128k-batch4-mtp3`, `128k-batch2-mtp`) — cible le p99 de 45 s ;
-3. `128k-batch4-8k` — TTFT/drain des rafales de sous-agents sans MTP ;
-4. audit fabric (`ib_write_bw`, `NCCL_DEBUG=INFO`, MTU) puis `128k-ep1` ;
-5. knobs niveau 2 un par un, en isolant chaque variable ;
-6. seulement ensuite, niveau 4.
+7. `128k-batch4-8k` — TTFT/drain des rafales de sous-agents sans MTP ;
+8. audit fabric (`ib_write_bw`, `NCCL_DEBUG=INFO`, MTU) ;
+9. knobs niveau 2 un par un, en isolant chaque variable ;
+10. seulement ensuite, ré-audit d'un runtime plus récent.
 
 Ne combinez jamais deux changements dans une même mesure : sans isolement,
 une régression est indetectable et un gain est inattribuable.

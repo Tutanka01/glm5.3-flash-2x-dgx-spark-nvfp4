@@ -41,18 +41,43 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length)) if length else {}
+        if self.path in ("/flush_cache", "/v1/flush_cache"):
+            self.send_json({"success": True})
+            return
+        if self.path in ("/v1/tokenize", "/tokenize"):
+            text = payload.get("prompt") or payload.get("input") or payload.get("text") or ""
+            self.send_json({"count": len(str(text).split())})
+            return
         if self.path != "/v1/chat/completions":
             self.send_error(404)
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length))
         if payload.get("stream"):
+            messages = payload.get("messages") or []
+            long_context = any(
+                "GLM53_LONG_CONTEXT_CAPABILITY_TEST" in str(item.get("content", ""))
+                for item in messages
+                if isinstance(item, dict)
+            )
+            pieces = (
+                ["ALPHA_7319|", "MIDDLE_2846|", "OMEGA_9052"]
+                if long_context
+                else ["BENCH", "_OK"]
+            )
             events = [
-                {"choices": [{"delta": {"content": "BENCH"}}]},
-                {"choices": [{"delta": {"content": "_OK"}}]},
+                *({"choices": [{"delta": {"content": piece}}]} for piece in pieces),
                 {
                     "choices": [],
-                    "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+                    "usage": {
+                        "prompt_tokens": sum(
+                            len(str(item.get("content", "")).split())
+                            for item in messages
+                            if isinstance(item, dict)
+                        )
+                        or 12,
+                        "completion_tokens": len(pieces),
+                    },
                 },
             ]
             body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
@@ -101,4 +126,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

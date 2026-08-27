@@ -14,6 +14,7 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-27 | `32k-mtp` | `--runs 3` | 9/9 | 0,39 s | 0,56 s | 29,0 tok/s | — | MTP : ×2,0 vs mono-flux sans MTP | `glm53-benchmark-20260827-134305.json` |
 | 2026-08-27 | `128k-batch4-mtp` | `--runs 3` | 9/9 | 0,40 s | 0,53 s | 28,9 tok/s | — | décode identique à 32k-mtp : le long contexte ne pénalise pas le décode | `glm53-benchmark-20260827-140200.json` |
 | 2026-08-27 | `128k-batch4-mtp` | `--runs 3 --concurrency 4` | 9/9 | 7,61 s | 45,3 s | 21,7 tok/s | 41,8 tok/s (114,7 s) | agrégé +33 % mais TTFT dégradé par l'admission retardée sous spéculation | `glm53-benchmark-20260827-140538.json` |
+| 2026-08-27 | `256k-graphs` | `--runs 3` | 9/9 | 0,32 s | 0,37 s | 14,4 tok/s | — | limite serveur 262k + petits prompts : capture bs=1 et décode court validés, **capacité 256k non testée** | `glm53-benchmark-20260827-181201.json` |
 
 ## Lecture des mesures du 2026-08-27
 
@@ -35,3 +36,42 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 - **Recommandation issue des mesures** : `128k-batch4-mtp` pour l'usage
   interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents.
   Pistes intermédiaires : MTP à 3 étapes, ou MTP à concurrence 2.
+- **Le run `256k-graphs` n'est pas un test 256k** : ses prompts font quelques
+  dizaines de tokens. Il prouve que la capture et le replay court passent avec
+  `context-length=262144`, pas qu'un préfill froid proche de cette limite
+  produit un premier token. Cette capacité reste « non mesurée » tant que le
+  protocole ci-dessous n'a pas réussi.
+
+## Matrice de capacité long-contexte
+
+Le checkpoint est nativement configuré pour 1 048 576 tokens, mais la fenêtre
+réellement utilisable dépend du pool KV, des workspaces et du chemin de replay.
+Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
+
+| Profil | Cible froide | Graphes | MTP | KV | Préfill CP | État |
+|---|---:|---|---|---|---|---|
+| `256k-mtp` | 240 000 | oui | 5 | FP8 | non | à mesurer |
+| `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
+| `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; chemin sûr du bug graph |
+| `512k-mtp-cp` | 480 000 | oui | 5 | FP8 | 2 rangs | à mesurer ; expérimental |
+
+Commande canonique :
+
+```bash
+./bench-long-context.py \
+  --target-tokens 480000 \
+  --cold \
+  --label 512k-mtp-cp
+```
+
+Le client calibre le texte avec l'endpoint tokenizer du serveur, place trois
+aiguilles vers 5 %, 50 % et 95 %, mesure le TTFT/préfill et le décode, puis
+interroge `/v1/models` après la réponse. La ligne ne passe que si les trois
+codes sont retrouvés et si l'API est encore saine. Utilisez une montée par
+paliers 300k → 400k → 480k, avec `--cold` à chaque fois.
+
+Pourquoi ce protocole est bloquant : [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550)
+rapporte un crash de replay CUDA graph au premier token après un préfill froid
+supérieur à 262 144 tokens. Le context parallelism de préfill à deux rangs a
+fait passer 428k dans le reproducer amont, mais il ne constitue pas une preuve
+sur GB10/FlashInfer tant que la même requête n'a pas réussi ici.

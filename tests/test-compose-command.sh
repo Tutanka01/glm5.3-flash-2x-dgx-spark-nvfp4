@@ -17,6 +17,7 @@ run_profile() {
   local output_file
   output_file="$(mktemp /tmp/glm53-command.XXXXXX)"
   unset EP_SIZE ENABLE_TORCH_COMPILE ENABLE_MIXED_CHUNK SCHEDULE_CONSERVATIVENESS
+  unset ENABLE_PREFILL_CP ATTN_CP_SIZE CP_STRATEGY
   set -a
   # shellcheck disable=SC1090
   source "$ROOT_DIR/profiles/$profile.env"
@@ -31,6 +32,9 @@ run_profile() {
   TORCH_COMPILE_MAX_BS="${TORCH_COMPILE_MAX_BS:-4}"; export TORCH_COMPILE_MAX_BS
   ENABLE_MIXED_CHUNK="${ENABLE_MIXED_CHUNK:-0}"; export ENABLE_MIXED_CHUNK
   SCHEDULE_CONSERVATIVENESS="${SCHEDULE_CONSERVATIVENESS:-1.0}"; export SCHEDULE_CONSERVATIVENESS
+  ENABLE_PREFILL_CP="${ENABLE_PREFILL_CP:-0}"; export ENABLE_PREFILL_CP
+  ATTN_CP_SIZE="${ATTN_CP_SIZE:-1}"; export ATTN_CP_SIZE
+  CP_STRATEGY="${CP_STRATEGY:-interleave}"; export CP_STRATEGY
   PATH="$ROOT_DIR/tests/mock-bin:$PATH" \
   MODEL_SNAPSHOT_CONTAINER=/cache/huggingface/hub/models--test/snapshots/f4aa \
   SERVED_MODEL_NAME=glm-5.3-flash-nvfp4 \
@@ -84,10 +88,17 @@ run_profile() {
   else
     ! grep -Fx -- '--enable-mixed-chunk' "$output_file" >/dev/null
   fi
+  if [ "$ENABLE_PREFILL_CP" = "1" ]; then
+    grep -Fx -- '--enable-prefill-cp' "$output_file" >/dev/null
+    grep -A1 -Fx -- '--attn-cp-size' "$output_file" | grep -Fx -- "$ATTN_CP_SIZE" >/dev/null
+    grep -A1 -Fx -- '--cp-strategy' "$output_file" | grep -Fx -- "$CP_STRATEGY" >/dev/null
+  else
+    ! grep -Fx -- '--enable-prefill-cp' "$output_file" >/dev/null
+  fi
   rm -f "$output_file"
 }
 
-for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 256k 256k-graphs 32k-mtp 32k-eager; do
+for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 256k 256k-graphs 256k-mtp 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
   run_profile "$profile"
 done
 

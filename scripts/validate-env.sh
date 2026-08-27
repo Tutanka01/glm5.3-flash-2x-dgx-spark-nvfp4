@@ -80,11 +80,18 @@ ENABLE_TORCH_COMPILE="${ENABLE_TORCH_COMPILE:-0}"
 TORCH_COMPILE_MAX_BS="${TORCH_COMPILE_MAX_BS:-4}"
 ENABLE_MIXED_CHUNK="${ENABLE_MIXED_CHUNK:-0}"
 SCHEDULE_CONSERVATIVENESS="${SCHEDULE_CONSERVATIVENESS:-1.0}"
-SGLANG_ENABLE_SPEC_V2="${SGLANG_ENABLE_SPEC_V2:-0}"
+ENABLE_PREFILL_CP="${ENABLE_PREFILL_CP:-0}"
+ATTN_CP_SIZE="${ATTN_CP_SIZE:-1}"
+CP_STRATEGY="${CP_STRATEGY:-interleave}"
+
+if [ "${SGLANG_ENABLE_SPEC_V2+x}" = "x" ]; then
+  glm53_warn "SGLANG_ENABLE_SPEC_V2 is obsolete in the pinned runtime and is ignored; remove it from .env.glm53"
+fi
 
 for integer_name in \
   MAX_MODEL_LEN MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS CUDA_GRAPH_MAX_BS \
-  MTP_NUM_TOKENS HF_DOWNLOAD_WORKERS EP_SIZE TORCH_COMPILE_MAX_BS; do
+  MTP_NUM_TOKENS HF_DOWNLOAD_WORKERS EP_SIZE TORCH_COMPILE_MAX_BS \
+  ATTN_CP_SIZE; do
   integer_value="${!integer_name:-}"
   case "$integer_value" in ''|*[!0-9]*) glm53_die "$integer_name must be a non-negative integer" ;; esac
 done
@@ -122,7 +129,7 @@ esac
 for switch_value in \
   "${OOM_GUARD:-1}" "${START_SMOKE:-1}" "${REQUIRE_SWAP_OFF:-0}" \
   "${ALLOW_UNSUPPORTED_PLATFORM:-0}" "${STRICT_FABRIC_ROUTE:-0}" \
-  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" "$SGLANG_ENABLE_SPEC_V2"; do
+  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" "$ENABLE_PREFILL_CP"; do
   case "$switch_value" in 0|1) ;; *) glm53_die "Boolean recipe switches must be 0 or 1" ;; esac
 done
 
@@ -154,11 +161,20 @@ PY
 if [ "$MTP_NUM_TOKENS" -gt 0 ] && [ "$ENABLE_MIXED_CHUNK" = "1" ]; then
   glm53_die "ENABLE_MIXED_CHUNK is incompatible with MTP speculative decoding; keep MTP_NUM_TOKENS=0 with it"
 fi
-if [ "$SGLANG_ENABLE_SPEC_V2" = "1" ] && [ "$MTP_NUM_TOKENS" -eq 0 ]; then
-  glm53_warn "SGLANG_ENABLE_SPEC_V2=1 has no effect while MTP_NUM_TOKENS=0"
-fi
 if [ "$ENABLE_TORCH_COMPILE" = "1" ] && [ "$TORCH_COMPILE_MAX_BS" -lt "$MAX_NUM_SEQS" ]; then
   glm53_warn "TORCH_COMPILE_MAX_BS is below MAX_NUM_SEQS; larger decode batches stay uncompiled"
+fi
+case "$CP_STRATEGY" in
+  interleave|zigzag) ;;
+  *) glm53_die "CP_STRATEGY must be interleave or zigzag" ;;
+esac
+if [ "$ENABLE_PREFILL_CP" = "1" ]; then
+  [ "$ATTN_CP_SIZE" = "2" ] || \
+    glm53_die "ENABLE_PREFILL_CP=1 requires ATTN_CP_SIZE=2 on this two-rank recipe"
+  [ "$CP_STRATEGY" = "interleave" ] || \
+    glm53_warn "CP_STRATEGY=zigzag is unvalidated for GLM-5.3 DSA on this SM121 runtime"
+elif [ "$ATTN_CP_SIZE" != "1" ]; then
+  glm53_die "ATTN_CP_SIZE must remain 1 while ENABLE_PREFILL_CP=0"
 fi
 
 case "${CONTAINER_MEMORY_LIMIT:-120g}" in
@@ -194,7 +210,8 @@ printf '  context/requests/prefill: %s / %s / %s\n' \
 printf '  MoE/DSA/KV: %s / %s / %s\n' "$MOE_BACKEND" "$DSA_DECODE_BACKEND" "$KV_CACHE_DTYPE"
 printf '  graphs-disabled/MTP: %s / %s\n' "$DISABLE_CUDA_GRAPH" "$MTP_NUM_TOKENS"
 printf '  TP/EP: 2/%s, conservativeness=%s\n' "$EP_SIZE" "$SCHEDULE_CONSERVATIVENESS"
-printf '  experiments: torch-compile=%s mixed-chunk=%s spec-v2=%s\n' \
-  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" "$SGLANG_ENABLE_SPEC_V2"
+printf '  experiments: torch-compile=%s mixed-chunk=%s prefill-cp=%s/%s/%s\n' \
+  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" \
+  "$ENABLE_PREFILL_CP" "$ATTN_CP_SIZE" "$CP_STRATEGY"
 printf '  memory: static=%s container-limit=%s\n' \
   "$MEM_FRACTION_STATIC" "${CONTAINER_MEMORY_LIMIT:-120g}"

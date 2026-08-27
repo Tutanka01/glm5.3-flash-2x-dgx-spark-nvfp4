@@ -150,8 +150,14 @@ Pour suivre les logs en continu, sélectionnez un seul nœud :
 | `128k-batch2-mtp` | 131 072 | 2 | FlashInfer CUTLASS | oui | 5 étapes | compromis interactif MTP |
 | `128k-batch8` | 131 072 | 8 | FlashInfer CUTLASS | oui | non | longs contextes + forte concurrence |
 | `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | TP pur (EP=1) vs all-to-all EP=2 |
+| `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | MTP + EP=1, ablation communication |
+| `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | MTP + torch.compile bs=1 |
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
 | `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | 256k avec CUDA graphs bs=1 |
+| `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | long contexte maximal + décode ×2 |
+| `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | KV BF16 + CP=2, témoin qualité stricte |
+| `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | >256k sûr, sans replay CUDA graph |
+| `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | >256k rapide, préfill CP=2 expérimental |
 | `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
 | `32k-eager` | 32 768 | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
 
@@ -178,9 +184,13 @@ Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un ch
 
 Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
 
-Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes. Le profil `256k` reste incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées ; `256k-graphs` teste précisément leur réactivation.
+Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes.
 
-Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark). Les leviers d'optimisation supplémentaires — EP=1 contre EP=2, torch.compile, scheduler sous spéculation, fusion des rails RoCE, requantification du `lm_head` — sont décrits avec leur risque qualité et leur protocole de mesure dans [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md).
+Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Cette distinction est importante car [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit un crash au premier token de décode au-delà de 262 144 tokens lorsque les graphes sont actifs. `512k-mtp-eager` est le chemin sûr sans graphes. `512k-mtp-cp` répartit le préfill DSA sur les deux rangs (`CP=2`, interleave) afin de garder environ 240k tokens/rang pour un test froid à 480k ; il reste expérimental jusqu'au passage du benchmark long-contexte. `384k-quality` remplace le KV FP8 par du BF16 pour mesurer le coût d'une politique sans compression KV supplémentaire.
+
+Pour dépasser les ~29 tok/s mono-flux sans changer les poids ni la politique d'échantillonnage, `128k-mtp-ep1` isole un autre motif de communication MoE et `128k-mtp-compile` isole la compilation bs=1. Ils doivent être comparés séparément au profil MTP5 de référence ; une combinaison n'est justifiée que si chaque ablation gagne seule.
+
+Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark). Les leviers supplémentaires — EP=1 contre EP=2, torch.compile, profondeur MTP, admission et fusion des rails RoCE — sont décrits avec leur risque qualité et leur protocole de mesure dans [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md). La requantification du `lm_head` est explicitement exclue de la trajectoire sans nouveau compromis qualité.
 
 ## Connexion depuis OpenCode
 
@@ -218,6 +228,17 @@ Pour simuler des sous-agents et mesurer le comportement en charge, gardez N requ
 ./bench-glm53.py --runs 3 --concurrency 4
 ```
 
+Le benchmark court ne valide pas la capacité long-contexte. Pour construire un vrai prompt calibré par le tokenizer SGLang, placer trois aiguilles à 5/50/95 %, vider le radix cache et vérifier que l'API survit au premier token de décode :
+
+```bash
+./bench-long-context.py \
+  --target-tokens 480000 \
+  --cold \
+  --label 512k-mtp-cp
+```
+
+Le résultat JSON sépare le nombre de tokens demandé, le nombre réellement envoyé après le chat template, le TTFT/préfill, le débit de décode, la réussite des trois récupérations et la santé de l'API après la requête. Une limite de contexte n'est considérée validée que si ce test froid passe ; un simple `max_model_len` annoncé par `/v1/models` ne suffit pas.
+
 Pour comparer une seconde API compatible OpenAI avec les mêmes prompts :
 
 ```bash
@@ -250,7 +271,7 @@ La provenance, les révisions et les invariants du checkpoint sont détaillés d
 
 ## Tests de la recette
 
-La suite locale vérifie la syntaxe, les six profils Compose, le validateur fail-closed, l'orchestration worker-first et les clients API simulés :
+La suite locale vérifie la syntaxe, tous les profils Compose, le validateur fail-closed, l'orchestration worker-first et les clients de benchmark court/long simulés :
 
 ```bash
 ./tests/run-local.sh

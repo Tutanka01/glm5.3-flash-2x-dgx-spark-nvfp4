@@ -133,6 +133,21 @@ Le profil `256k-graphs` réactive la capture des graphes à 262 144 tokens avec 
 
 Un OOM pendant la capture n'est pas silencieux : le launcher collecte les logs et arrête les deux rangs.
 
+## Le préfill >262k finit puis le serveur tombe au premier token
+
+C'est distinct d'un OOM de capture. [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550)
+documente un abort dans le replay du graphe de décode après un préfill froid
+qui franchit 262 144 tokens. Un benchmark court avec une limite serveur 512k ne
+détecte pas ce défaut.
+
+- confirmez avec `./bench-long-context.py --target-tokens 300000 --cold` ;
+- capturez immédiatement les logs des deux rangs ;
+- utilisez `512k-mtp-eager` pour désactiver le replay tout en gardant MTP ;
+- testez ensuite `512k-mtp-cp`, d'abord à 300k, puis 400k et 480k. Le préfill
+  CP=2 garde environ la moitié de la séquence sur chaque rang, mais ce chemin
+  reste expérimental tant que les trois aiguilles et la santé post-requête ne
+  sont pas validées sur les deux GB10.
+
 ## Combinaisons de knobs refusées
 
 Le validateur fail-closed refuse deux combinaisons instables plutôt que de laisser SGLang échouer au boot :

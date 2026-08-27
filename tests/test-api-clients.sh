@@ -45,4 +45,23 @@ assert len(payload["results"]) == 3
 assert all(item["ok"] for item in payload["results"])
 assert all(item["completion_tokens"] == 2 for item in payload["results"])
 PY
-printf 'smoke + benchmark clients: OK\n'
+
+(
+  cd "$TEST_TMP"
+  "$ROOT_DIR/bench-long-context.py" \
+    --base-url "http://127.0.0.1:$PORT/v1" \
+    --model glm-5.3-flash-nvfp4 \
+    --target-tokens 1024 \
+    --cold \
+    --label mock \
+    --output "$TEST_TMP/long-result.json" >/dev/null
+)
+python3 - "$TEST_TMP/long-result.json" <<'PY'
+import json, sys
+payload=json.load(open(sys.argv[1], encoding="utf-8"))
+assert payload["ok"] is True
+assert payload["retrieval_ok"] is True
+assert payload["api_healthy_after"] is True
+assert payload["raw_message_tokens"] >= 960
+PY
+printf 'smoke + short/long benchmark clients: OK\n'

@@ -72,7 +72,9 @@ services:
       TORCH_COMPILE_MAX_BS: "${TORCH_COMPILE_MAX_BS:-4}"
       ENABLE_MIXED_CHUNK: "${ENABLE_MIXED_CHUNK:-0}"
       SCHEDULE_CONSERVATIVENESS: "${SCHEDULE_CONSERVATIVENESS:-1.0}"
-      SGLANG_ENABLE_SPEC_V2: "${SGLANG_ENABLE_SPEC_V2:-0}"
+      ENABLE_PREFILL_CP: "${ENABLE_PREFILL_CP:-0}"
+      ATTN_CP_SIZE: "${ATTN_CP_SIZE:-1}"
+      CP_STRATEGY: "${CP_STRATEGY:-interleave}"
 
       CUDA_DEVICE_ORDER: PCI_BUS_ID
       TORCH_CUDA_ARCH_LIST: 12.1a
@@ -137,7 +139,9 @@ services:
         case "$${ENABLE_TORCH_COMPILE:-0}" in 0|1) ;; *) echo "ENABLE_TORCH_COMPILE must be 0 or 1" >&2; exit 2 ;; esac
         case "$${TORCH_COMPILE_MAX_BS:-4}" in ''|*[!0-9]*) echo "TORCH_COMPILE_MAX_BS must be a non-negative integer" >&2; exit 2 ;; esac
         case "$${ENABLE_MIXED_CHUNK:-0}" in 0|1) ;; *) echo "ENABLE_MIXED_CHUNK must be 0 or 1" >&2; exit 2 ;; esac
-        case "$${SGLANG_ENABLE_SPEC_V2:-0}" in 0|1) ;; *) echo "SGLANG_ENABLE_SPEC_V2 must be 0 or 1" >&2; exit 2 ;; esac
+        case "$${ENABLE_PREFILL_CP:-0}" in 0|1) ;; *) echo "ENABLE_PREFILL_CP must be 0 or 1" >&2; exit 2 ;; esac
+        case "$${ATTN_CP_SIZE:-1}" in 1|2) ;; *) echo "ATTN_CP_SIZE must be 1 or 2 for this TP=2 recipe" >&2; exit 2 ;; esac
+        case "$${CP_STRATEGY:-interleave}" in interleave|zigzag) ;; *) echo "CP_STRATEGY must be interleave or zigzag" >&2; exit 2 ;; esac
 
         # Optional NCCL experiments: unset empty values so NCCL keeps the
         # stock defaults validated by this recipe.
@@ -200,9 +204,17 @@ services:
         if [ "$${ENABLE_MIXED_CHUNK:-0}" = "1" ]; then
           args+=(--enable-mixed-chunk)
         fi
+        if [ "$${ENABLE_PREFILL_CP:-0}" = "1" ]; then
+          args+=(
+            --enable-prefill-cp
+            --attn-cp-size "$${ATTN_CP_SIZE:-2}"
+            --cp-strategy "$${CP_STRATEGY:-interleave}"
+          )
+        fi
 
-        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s EP=%s graphs-disabled=%s MTP=%s\n' \
+        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s EP=%s graphs-disabled=%s MTP=%s prefill-CP=%s/%s/%s\n' \
           "$${NODE_RANK}" "$${MAX_MODEL_LEN}" "$${MOE_BACKEND}" \
           "$${DSA_PREFILL_BACKEND}" "$${DSA_DECODE_BACKEND}" \
-          "$${EP_SIZE:-2}" "$${DISABLE_CUDA_GRAPH}" "$${MTP_NUM_TOKENS}"
+          "$${EP_SIZE:-2}" "$${DISABLE_CUDA_GRAPH}" "$${MTP_NUM_TOKENS}" \
+          "$${ENABLE_PREFILL_CP:-0}" "$${ATTN_CP_SIZE:-1}" "$${CP_STRATEGY:-interleave}"
         exec python3 -m sglang.launch_server "$${args[@]}"
