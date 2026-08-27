@@ -9,7 +9,7 @@ PROFILE="${1:-}"
 glm53_load_config "$PROFILE"
 
 printf 'Profile: %s\n' "$GLM53_PROFILE_RESOLVED"
-printf 'Endpoint: http://%s:%s/v1\n' "$HEAD_FABRIC_IP" "$API_PORT"
+printf 'Endpoint: http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"
 
 printf '\n===== HEAD / rank 0 =====\n'
 NODE_RANK=0 HEADLESS= glm53_compose ps || true

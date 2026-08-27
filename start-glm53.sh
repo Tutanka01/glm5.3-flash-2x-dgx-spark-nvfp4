@@ -116,4 +116,4 @@ if [ "${START_SMOKE:-1}" = "1" ]; then
 fi
 
 trap - EXIT
-printf '\nGLM-5.3-Flash is serving at http://%s:%s/v1\n' "$HEAD_FABRIC_IP" "$API_PORT"
+printf '\nGLM-5.3-Flash is serving at http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"

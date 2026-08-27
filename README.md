@@ -169,6 +169,11 @@ export GLM53_API_KEY=local
 
 Si `API_KEY` est définie dans `.env.glm53`, exportez la même valeur côté OpenCode.
 
+`API_HOST=0.0.0.0` conserve l'écoute sur toutes les interfaces. Définissez
+`API_ADVERTISE_HOST` sur l'adresse de management du head pour que les commandes
+de statut et de démarrage affichent l'URL destinée aux clients, sans modifier le
+fabric RoCE privé.
+
 Par défaut, SGLang écoute sur `0.0.0.0` afin que le worker puisse observer la readiness du head. Le port `8888/tcp` est donc exposé sur les interfaces de la machine : configurez une clé API et/ou un filtrage réseau avant toute exposition hors du cluster de confiance.
 
 ## Benchmark

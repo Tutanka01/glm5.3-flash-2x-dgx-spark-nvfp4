@@ -17,7 +17,7 @@ docker compose version >/dev/null 2>&1 || glm53_die "Docker Compose v2 is requir
 
 REQUIRED_VARS=(
   WORKER_HOST WORKER_DIR MASTER_ADDR MASTER_PORT
-  HEAD_FABRIC_IP WORKER_FABRIC_IP
+  HEAD_FABRIC_IP WORKER_FABRIC_IP API_ADVERTISE_HOST
   NCCL_IB_HCA NCCL_SOCKET_IFNAME TP_SOCKET_IFNAME GLOO_SOCKET_IFNAME
   NCCL_IB_ADDR_RANGE HF_CACHE MODEL_ID MODEL_REVISION GLM53_RUNTIME_IMAGE
 )
@@ -145,6 +145,8 @@ printf '  engine: SGLang (patched SM121 runtime)\n'
 printf '  model: %s@%s\n' "$MODEL_ID" "$MODEL_REVISION"
 printf '  image: %s\n' "$GLM53_RUNTIME_IMAGE"
 printf '  head/worker fabric: %s / %s\n' "$HEAD_FABRIC_IP" "$WORKER_FABRIC_IP"
+printf '  advertised API: http://%s:%s/v1 (bind=%s)\n' \
+  "$API_ADVERTISE_HOST" "$API_PORT" "$API_HOST"
 printf '  context/requests/prefill: %s / %s / %s\n' \
   "$MAX_MODEL_LEN" "$MAX_NUM_SEQS" "$MAX_NUM_BATCHED_TOKENS"
 printf '  MoE/DSA/KV: %s / %s / %s\n' "$MOE_BACKEND" "$DSA_DECODE_BACKEND" "$KV_CACHE_DTYPE"
