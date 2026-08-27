@@ -7,7 +7,15 @@ case "$ALL_ARGS" in
   *" compose version "*) printf 'Docker Compose mock\n' ;;
   *" compose "*" config "*) ;;
   *" image inspect "*) ;;
-  *" inspect -f "*) printf 'true\n' ;;
+  *" inspect -f "*".State.Running"*) printf 'true\n' ;;
+  *" inspect -f "*".Config.Env"*)
+    printf '%s\n' \
+      'GLM53_PROFILE_NAME=32k' \
+      'MAX_MODEL_LEN=32768' \
+      'MAX_NUM_SEQS=1' \
+      'DISABLE_CUDA_GRAPH=0' \
+      'MTP_NUM_TOKENS=0'
+    ;;
   *" compose "*" ps -q "*)
     [ -f "$STATE_DIR/head" ] && printf 'head-container\n'
     ;;
@@ -18,4 +26,3 @@ case "$ALL_ARGS" in
   *" pull "*) ;;
   *) ;;
 esac
-

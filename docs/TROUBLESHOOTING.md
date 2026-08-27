@@ -50,6 +50,25 @@ Le runtime utilise NCCL ≥ 2.21 et sélectionne automatiquement le GID RoCE v2.
 
 Le garde arrête uniquement le conteneur portant les labels Compose exacts de cette recette.
 
+Le garde mémoire est exclusivement un garde de **démarrage**. Il doit être
+désarmé avant le smoke test et avant toute charge réelle. Après la readiness,
+`status-glm53.sh` retourne une erreur si le garde du head est encore actif.
+
+## `SIGTERM` pendant un préfill long alors que le serveur était prêt
+
+Si les blocs de préfill commencent normalement, puis qu'un `SIGTERM received`
+apparaît sans erreur CUDA préalable, inspectez `.glm53-guard-head.log`. Une
+ancienne version sondait le head via `MASTER_ADDR`; sur certains routages locaux,
+la sonde ne voyait jamais l'API et le garde restait armé. Lorsque le préfill
+faisait ensuite passer `MemAvailable` sous son seuil, il arrêtait proprement le
+conteneur, ce qui produisait `Remote end closed connection` côté benchmark et
+des `TCPStore Broken pipe` secondaires sur le worker.
+
+La recette courante sonde le head via `127.0.0.1`, attend l'arrêt effectif des
+deux gardes avant d'accepter du trafic et refuse le benchmark long si le garde
+local est encore vivant. Mettez la recette à jour, arrêtez les deux rangs, puis
+refaites un démarrage complet du profil.
+
 ## Mémoire KV insuffisante
 
 SGLang réserve les poids, le cache KV et l'état hybride KDA/Mamba dans `MEM_FRACTION_STATIC`. L'erreur `Not enough GPU memory for hybrid (mamba/linear-attention) state cache` avec une valeur négative de `total_rest_memory` indique que cette fraction est trop basse, pas trop haute. Le profil TP=2 publié et accepté utilise `MEM_FRACTION_STATIC=0.90`; la recette reprend donc cette valeur avec un plafond conteneur de `120g` et un garde hôte à 6 GiB.

@@ -6,5 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 ROLE="${1:-head}"
-PID_FILE="$GLM53_ROOT/.glm53-guard-$ROLE.pid"
+GUARD_STATE_DIR="${GLM53_GUARD_STATE_DIR:-$GLM53_ROOT}"
+PID_FILE="$GUARD_STATE_DIR/.glm53-guard-$ROLE.pid"
 glm53_stop_guard_pid_file "$PID_FILE"

@@ -96,7 +96,6 @@ while :; do
   fi
 
   if api_reports_expected_model; then
-    READY=1
     break
   fi
 
@@ -107,13 +106,17 @@ while :; do
   sleep "$WAIT_INTERVAL"
 done
 
-"$ROOT_DIR/scripts/stop-guard-node.sh" head || true
-glm53_worker_script stop-guard-node.sh worker || true
+glm53_info "Disarming startup-only memory guards before accepting traffic"
+"$ROOT_DIR/scripts/stop-guard-node.sh" head || \
+  glm53_die "Could not stop the head startup guard"
+glm53_worker_script stop-guard-node.sh worker || \
+  glm53_die "Could not stop the worker startup guard"
 glm53_info "API is ready with profile=$GLM53_PROFILE_RESOLVED"
 
 if [ "${START_SMOKE:-1}" = "1" ]; then
   "$ROOT_DIR/smoke-glm53.sh" --profile "$GLM53_PROFILE_RESOLVED"
 fi
 
+READY=1
 trap - EXIT
 printf '\nGLM-5.3-Flash is serving at http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"

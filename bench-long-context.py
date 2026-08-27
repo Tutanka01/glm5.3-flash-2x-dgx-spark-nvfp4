@@ -40,6 +40,36 @@ class TokenizerProbeError(BenchmarkError):
 RETRYABLE_HTTP_CODES = frozenset((408, 425, 429, 500, 502, 503, 504))
 
 
+def refuse_live_startup_guard() -> None:
+    pid_file = Path(__file__).resolve().parent / ".glm53-guard-head.pid"
+    try:
+        raw_pid = pid_file.read_text(encoding="utf-8").splitlines()[0]
+        pid = int(raw_pid)
+    except (FileNotFoundError, IndexError, OSError, ValueError):
+        return
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        pass
+
+    command = ""
+    try:
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", errors="replace"
+        )
+    except OSError:
+        pass
+    if not command or "oom-guard-node.sh" in command:
+        raise BenchmarkError(
+            f"startup memory guard pid={pid} is still active. It may stop the "
+            "server when the long prefill consumes memory. Wait for "
+            "start-glm53.sh to finish or run ./scripts/stop-guard-node.sh head, "
+            "then confirm with ./status-glm53.sh before benchmarking."
+        )
+
+
 def describe_http_error(exc: urllib.error.HTTPError) -> str:
     detail = f"HTTP {exc.code} {exc.reason}"
     try:
@@ -377,6 +407,7 @@ def main() -> int:
         parser.error("--readiness-timeout must be non-negative")
 
     api_key = os.environ.get(args.api_key_env)
+    refuse_live_startup_guard()
     tokenizer_url, make_tokenizer_payload = wait_for_tokenizer(
         args.base_url,
         args.model,

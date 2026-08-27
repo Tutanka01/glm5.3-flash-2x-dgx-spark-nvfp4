@@ -156,6 +156,7 @@ glm53_worker_compose() {
     COMPOSE_DISABLE_ENV_FILE=1
     NODE_RANK=1
     HEADLESS=1
+    "GLM53_PROFILE_RESOLVED=$GLM53_PROFILE_RESOLVED"
     "HF_CACHE=$WORKER_HF_CACHE"
     "MODEL_SNAPSHOT_CONTAINER=$MODEL_SNAPSHOT_CONTAINER"
     "HEAD_FABRIC_IP=$HEAD_FABRIC_IP"
@@ -229,17 +230,56 @@ glm53_container_running_local() {
 
 glm53_stop_guard_pid_file() {
   local pid_file="$1"
-  local guard_pid guard_command
+  local guard_pid guard_command attempts
   [ -f "$pid_file" ] || return 0
   guard_pid="$(sed -n '1p' "$pid_file" 2>/dev/null || true)"
   case "$guard_pid" in
-    ''|*[!0-9]*) ;;
+    ''|*[!0-9]*)
+      glm53_warn "Removing invalid startup-guard PID file: $pid_file"
+      rm -f "$pid_file"
+      return 0
+      ;;
     *)
       if kill -0 "$guard_pid" 2>/dev/null; then
-        guard_command="$(ps -p "$guard_pid" -o command= 2>/dev/null || true)"
+        if [ -r "/proc/$guard_pid/cmdline" ]; then
+          guard_command="$(tr '\0' ' ' < "/proc/$guard_pid/cmdline" 2>/dev/null || true)"
+        else
+          guard_command="$(ps -p "$guard_pid" -o command= 2>/dev/null || true)"
+        fi
         case "$guard_command" in
-          *oom-guard-node.sh*) kill "$guard_pid" 2>/dev/null || true ;;
-          *) glm53_warn "Refusing to kill stale PID $guard_pid; it is not an oom-guard-node process" ;;
+          *oom-guard-node.sh*)
+            kill "$guard_pid" 2>/dev/null || true
+            attempts=0
+            while kill -0 "$guard_pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
+              sleep 0.1
+              attempts=$((attempts + 1))
+            done
+            if kill -0 "$guard_pid" 2>/dev/null; then
+              if [ -r "/proc/$guard_pid/cmdline" ]; then
+                guard_command="$(tr '\0' ' ' < "/proc/$guard_pid/cmdline" 2>/dev/null || true)"
+              else
+                guard_command="$(ps -p "$guard_pid" -o command= 2>/dev/null || true)"
+              fi
+              case "$guard_command" in
+                *oom-guard-node.sh*)
+                  kill -KILL "$guard_pid" 2>/dev/null || true
+                  sleep 0.1
+                  if kill -0 "$guard_pid" 2>/dev/null; then
+                    glm53_warn "Startup guard pid=$guard_pid did not terminate"
+                    return 1
+                  fi
+                  ;;
+                *)
+                  glm53_warn "Startup-guard PID $guard_pid changed identity while stopping"
+                  return 1
+                  ;;
+              esac
+            fi
+            ;;
+          *)
+            glm53_warn "Refusing to kill stale PID $guard_pid; it is not an oom-guard-node process"
+            return 1
+            ;;
         esac
       fi
       ;;
@@ -248,6 +288,7 @@ glm53_stop_guard_pid_file() {
 }
 
 glm53_stop_guard_local() {
-  local pid_file="$GLM53_ROOT/.glm53-guard-head.pid"
+  local guard_state_dir="${GLM53_GUARD_STATE_DIR:-$GLM53_ROOT}"
+  local pid_file="$guard_state_dir/.glm53-guard-head.pid"
   glm53_stop_guard_pid_file "$pid_file"
 }
