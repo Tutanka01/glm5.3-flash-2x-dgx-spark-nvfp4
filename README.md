@@ -144,9 +144,14 @@ Pour suivre les logs en continu, sélectionnez un seul nœud :
 | `64k` | 65 536 | 1 | FlashInfer CUTLASS | oui | non | deuxième étape |
 | `128k` | 131 072 | 1 | FlashInfer CUTLASS | oui | non | long contexte mono-requête |
 | `128k-batch4` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | sous-agents sur longs contextes |
+| `128k-batch4-8k` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | prefill 8192 : drain accéléré des rafales |
 | `128k-batch4-mtp` | 131 072 | 4 | FlashInfer CUTLASS | oui | 5 étapes | longs contextes + concurrence + MTP |
+| `128k-batch4-mtp3` | 131 072 | 4 | FlashInfer CUTLASS | oui | 3 étapes | MTP batché : TTFT réduit, gain conservé |
+| `128k-batch2-mtp` | 131 072 | 2 | FlashInfer CUTLASS | oui | 5 étapes | compromis interactif MTP |
 | `128k-batch8` | 131 072 | 8 | FlashInfer CUTLASS | oui | non | longs contextes + forte concurrence |
+| `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | TP pur (EP=1) vs all-to-all EP=2 |
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
+| `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | 256k avec CUDA graphs bs=1 |
 | `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
 | `32k-eager` | 32 768 | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
 
@@ -173,9 +178,9 @@ Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un ch
 
 Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
 
-Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Le profil `256k` reste incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées.
+Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes. Le profil `256k` reste incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées ; `256k-graphs` teste précisément leur réactivation.
 
-Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark).
+Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark). Les leviers d'optimisation supplémentaires — EP=1 contre EP=2, torch.compile, scheduler sous spéculation, fusion des rails RoCE, requantification du `lm_head` — sont décrits avec leur risque qualité et leur protocole de mesure dans [docs/OPTIMIZATION.md](docs/OPTIMIZATION.md).
 
 ## Connexion depuis OpenCode
 
@@ -256,6 +261,7 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 ## Documentation complémentaire
 
 - [audit du checkpoint](docs/AUDIT.md) ;
+- [optimisation : vitesse, concurrence et contexte](docs/OPTIMIZATION.md) ;
 - [configuration et diagnostic RoCE](docs/NETWORK.md) ;
 - [historique des benchmarks](docs/BENCHMARKS.md) ;
 - [guide de dépannage](docs/TROUBLESHOOTING.md) ;

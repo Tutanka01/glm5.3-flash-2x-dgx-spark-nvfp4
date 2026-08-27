@@ -72,9 +72,19 @@ case "$API_PORT" in ''|*[!0-9]*) glm53_die "API_PORT must be an integer" ;; esac
 [ "$MASTER_PORT" -ge 1 ] && [ "$MASTER_PORT" -le 65535 ] || glm53_die "MASTER_PORT is out of range"
 [ "$API_PORT" -ge 1 ] && [ "$API_PORT" -le 65535 ] || glm53_die "API_PORT is out of range"
 
+# Optional optimization knobs (docs/OPTIMIZATION.md). Normalized here so the
+# checks below also pass with pre-2026-08-27 .env.glm53 files that omit them.
+# The defaults reproduce the validated recipe behavior exactly.
+EP_SIZE="${EP_SIZE:-2}"
+ENABLE_TORCH_COMPILE="${ENABLE_TORCH_COMPILE:-0}"
+TORCH_COMPILE_MAX_BS="${TORCH_COMPILE_MAX_BS:-4}"
+ENABLE_MIXED_CHUNK="${ENABLE_MIXED_CHUNK:-0}"
+SCHEDULE_CONSERVATIVENESS="${SCHEDULE_CONSERVATIVENESS:-1.0}"
+SGLANG_ENABLE_SPEC_V2="${SGLANG_ENABLE_SPEC_V2:-0}"
+
 for integer_name in \
   MAX_MODEL_LEN MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS CUDA_GRAPH_MAX_BS \
-  MTP_NUM_TOKENS HF_DOWNLOAD_WORKERS; do
+  MTP_NUM_TOKENS HF_DOWNLOAD_WORKERS EP_SIZE TORCH_COMPILE_MAX_BS; do
   integer_value="${!integer_name:-}"
   case "$integer_value" in ''|*[!0-9]*) glm53_die "$integer_name must be a non-negative integer" ;; esac
 done
@@ -86,13 +96,19 @@ done
 [ "$CUDA_GRAPH_MAX_BS" -ge "$MAX_NUM_SEQS" ] || \
   glm53_die "CUDA_GRAPH_MAX_BS must cover MAX_NUM_SEQS"
 [ "$MTP_NUM_TOKENS" -le 8 ] || glm53_die "MTP_NUM_TOKENS above 8 is rejected by this recipe"
+[ "$EP_SIZE" -ge 1 ] && [ "$EP_SIZE" -le 2 ] || \
+  glm53_die "EP_SIZE must be 1 or 2 with --tp-size 2"
+[ "$TORCH_COMPILE_MAX_BS" -ge 1 ] || glm53_die "TORCH_COMPILE_MAX_BS must be at least 1"
 [ "$HF_DOWNLOAD_WORKERS" -ge 1 ] && [ "$HF_DOWNLOAD_WORKERS" -le 16 ] || \
   glm53_die "HF_DOWNLOAD_WORKERS must be between 1 and 16"
 
 case "$DISABLE_CUDA_GRAPH" in 0|1) ;; *) glm53_die "DISABLE_CUDA_GRAPH must be 0 or 1" ;; esac
 case "$MOE_BACKEND" in
   flashinfer_cutlass|marlin) ;;
-  *) glm53_die "MOE_BACKEND must be flashinfer_cutlass or marlin" ;;
+  flashinfer_trtllm)
+    glm53_warn "MOE_BACKEND=flashinfer_trtllm is experimental and not audited; run the smoke test and a quality comparison before adopting it"
+    ;;
+  *) glm53_die "MOE_BACKEND must be flashinfer_cutlass, marlin or flashinfer_trtllm" ;;
 esac
 case "$DSA_PREFILL_BACKEND:$DSA_DECODE_BACKEND" in
   flashinfer_sparse_mla:flashinfer_sparse_mla) ;;
@@ -105,19 +121,45 @@ esac
 
 for switch_value in \
   "${OOM_GUARD:-1}" "${START_SMOKE:-1}" "${REQUIRE_SWAP_OFF:-0}" \
-  "${ALLOW_UNSUPPORTED_PLATFORM:-0}" "${STRICT_FABRIC_ROUTE:-0}"; do
+  "${ALLOW_UNSUPPORTED_PLATFORM:-0}" "${STRICT_FABRIC_ROUTE:-0}" \
+  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" "$SGLANG_ENABLE_SPEC_V2"; do
   case "$switch_value" in 0|1) ;; *) glm53_die "Boolean recipe switches must be 0 or 1" ;; esac
 done
 
-python3 - "$MEM_FRACTION_STATIC" <<'PY'
+MEM_FRACTION_HIGH="$(python3 - "$MEM_FRACTION_STATIC" <<'PY'
 import sys
 try:
     value=float(sys.argv[1])
 except ValueError:
     raise SystemExit("MEM_FRACTION_STATIC must be a number")
-if not 0.70 <= value <= 0.90:
-    raise SystemExit("MEM_FRACTION_STATIC must be between 0.70 and 0.90")
+if not 0.70 <= value <= 0.92:
+    raise SystemExit("MEM_FRACTION_STATIC must be between 0.70 and 0.92")
+print(1 if value > 0.90 else 0)
 PY
+)"
+if [ "$MEM_FRACTION_HIGH" = "1" ]; then
+  glm53_warn "MEM_FRACTION_STATIC above 0.90 is outside the validated TP=2 band; expect OOM risk at CUDA graph capture"
+fi
+
+python3 - "$SCHEDULE_CONSERVATIVENESS" <<'PY'
+import sys
+try:
+    value=float(sys.argv[1])
+except ValueError:
+    raise SystemExit("SCHEDULE_CONSERVATIVENESS must be a number")
+if not 0.5 <= value <= 2.0:
+    raise SystemExit("SCHEDULE_CONSERVATIVENESS must be between 0.5 and 2.0")
+PY
+
+if [ "$MTP_NUM_TOKENS" -gt 0 ] && [ "$ENABLE_MIXED_CHUNK" = "1" ]; then
+  glm53_die "ENABLE_MIXED_CHUNK is incompatible with MTP speculative decoding; keep MTP_NUM_TOKENS=0 with it"
+fi
+if [ "$SGLANG_ENABLE_SPEC_V2" = "1" ] && [ "$MTP_NUM_TOKENS" -eq 0 ]; then
+  glm53_warn "SGLANG_ENABLE_SPEC_V2=1 has no effect while MTP_NUM_TOKENS=0"
+fi
+if [ "$ENABLE_TORCH_COMPILE" = "1" ] && [ "$TORCH_COMPILE_MAX_BS" -lt "$MAX_NUM_SEQS" ]; then
+  glm53_warn "TORCH_COMPILE_MAX_BS is below MAX_NUM_SEQS; larger decode batches stay uncompiled"
+fi
 
 case "${CONTAINER_MEMORY_LIMIT:-120g}" in
   [1-9][0-9]g|1[01][0-9]g|12[0-7]g) ;;
@@ -151,5 +193,8 @@ printf '  context/requests/prefill: %s / %s / %s\n' \
   "$MAX_MODEL_LEN" "$MAX_NUM_SEQS" "$MAX_NUM_BATCHED_TOKENS"
 printf '  MoE/DSA/KV: %s / %s / %s\n' "$MOE_BACKEND" "$DSA_DECODE_BACKEND" "$KV_CACHE_DTYPE"
 printf '  graphs-disabled/MTP: %s / %s\n' "$DISABLE_CUDA_GRAPH" "$MTP_NUM_TOKENS"
+printf '  TP/EP: 2/%s, conservativeness=%s\n' "$EP_SIZE" "$SCHEDULE_CONSERVATIVENESS"
+printf '  experiments: torch-compile=%s mixed-chunk=%s spec-v2=%s\n' \
+  "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" "$SGLANG_ENABLE_SPEC_V2"
 printf '  memory: static=%s container-limit=%s\n' \
   "$MEM_FRACTION_STATIC" "${CONTAINER_MEMORY_LIMIT:-120g}"

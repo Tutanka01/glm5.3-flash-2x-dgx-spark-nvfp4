@@ -65,6 +65,15 @@ services:
       DISABLE_CUDA_GRAPH: "${DISABLE_CUDA_GRAPH:-0}"
       MTP_NUM_TOKENS: "${MTP_NUM_TOKENS:-0}"
 
+      # Optional optimization experiments (docs/OPTIMIZATION.md). The defaults
+      # reproduce the validated recipe behavior exactly.
+      EP_SIZE: "${EP_SIZE:-2}"
+      ENABLE_TORCH_COMPILE: "${ENABLE_TORCH_COMPILE:-0}"
+      TORCH_COMPILE_MAX_BS: "${TORCH_COMPILE_MAX_BS:-4}"
+      ENABLE_MIXED_CHUNK: "${ENABLE_MIXED_CHUNK:-0}"
+      SCHEDULE_CONSERVATIVENESS: "${SCHEDULE_CONSERVATIVENESS:-1.0}"
+      SGLANG_ENABLE_SPEC_V2: "${SGLANG_ENABLE_SPEC_V2:-0}"
+
       CUDA_DEVICE_ORDER: PCI_BUS_ID
       TORCH_CUDA_ARCH_LIST: 12.1a
       FLASHINFER_CUDA_ARCH_LIST: 12.1a
@@ -91,6 +100,12 @@ services:
       NCCL_MAX_NCHANNELS: "${NCCL_MAX_NCHANNELS:-4}"
       NCCL_MIN_NCHANNELS: "${NCCL_MIN_NCHANNELS:-4}"
       NCCL_DEBUG: "${NCCL_DEBUG:-WARN}"
+      # Optional fabric experiments. Empty values are unset by the entrypoint
+      # so NCCL keeps its stock defaults unless a knob is configured.
+      NCCL_IB_MERGE_NICS: "${NCCL_IB_MERGE_NICS:-}"
+      NCCL_IB_QPS_PER_CONNECTION: "${NCCL_IB_QPS_PER_CONNECTION:-}"
+      NCCL_NET_GDR_LEVEL: "${NCCL_NET_GDR_LEVEL:-}"
+      NCCL_DMABUF_ENABLE: "${NCCL_DMABUF_ENABLE:-}"
 
     healthcheck:
       test:
@@ -118,6 +133,19 @@ services:
 
         case "$${DISABLE_CUDA_GRAPH}" in 0|1) ;; *) echo "DISABLE_CUDA_GRAPH must be 0 or 1" >&2; exit 2 ;; esac
         case "$${MTP_NUM_TOKENS}" in ''|*[!0-9]*) echo "MTP_NUM_TOKENS must be a non-negative integer" >&2; exit 2 ;; esac
+        case "$${EP_SIZE:-2}" in 1|2) ;; *) echo "EP_SIZE must be 1 or 2 for this TP=2 recipe" >&2; exit 2 ;; esac
+        case "$${ENABLE_TORCH_COMPILE:-0}" in 0|1) ;; *) echo "ENABLE_TORCH_COMPILE must be 0 or 1" >&2; exit 2 ;; esac
+        case "$${TORCH_COMPILE_MAX_BS:-4}" in ''|*[!0-9]*) echo "TORCH_COMPILE_MAX_BS must be a non-negative integer" >&2; exit 2 ;; esac
+        case "$${ENABLE_MIXED_CHUNK:-0}" in 0|1) ;; *) echo "ENABLE_MIXED_CHUNK must be 0 or 1" >&2; exit 2 ;; esac
+        case "$${SGLANG_ENABLE_SPEC_V2:-0}" in 0|1) ;; *) echo "SGLANG_ENABLE_SPEC_V2 must be 0 or 1" >&2; exit 2 ;; esac
+
+        # Optional NCCL experiments: unset empty values so NCCL keeps the
+        # stock defaults validated by this recipe.
+        for knob in NCCL_IB_MERGE_NICS NCCL_IB_QPS_PER_CONNECTION NCCL_NET_GDR_LEVEL NCCL_DMABUF_ENABLE; do
+          if [ -z "$${!knob:-}" ]; then
+            unset "$$knob"
+          fi
+        done
 
         args=(
           --model-path "$${MODEL_SNAPSHOT_CONTAINER}"
@@ -125,7 +153,7 @@ services:
           --host "$${API_HOST}"
           --port "$${API_PORT}"
           --tp-size 2
-          --ep-size 2
+          --ep-size "$${EP_SIZE:-2}"
           --nnodes 2
           --node-rank "$${NODE_RANK}"
           --dist-init-addr "$${MASTER_ADDR}:$${MASTER_PORT}"
@@ -165,9 +193,16 @@ services:
             --speculative-adaptive
           )
         fi
+        args+=(--schedule-conservativeness "$${SCHEDULE_CONSERVATIVENESS:-1.0}")
+        if [ "$${ENABLE_TORCH_COMPILE:-0}" = "1" ]; then
+          args+=(--enable-torch-compile --torch-compile-max-bs "$${TORCH_COMPILE_MAX_BS:-4}")
+        fi
+        if [ "$${ENABLE_MIXED_CHUNK:-0}" = "1" ]; then
+          args+=(--enable-mixed-chunk)
+        fi
 
-        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s graphs-disabled=%s MTP=%s\n' \
+        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s EP=%s graphs-disabled=%s MTP=%s\n' \
           "$${NODE_RANK}" "$${MAX_MODEL_LEN}" "$${MOE_BACKEND}" \
           "$${DSA_PREFILL_BACKEND}" "$${DSA_DECODE_BACKEND}" \
-          "$${DISABLE_CUDA_GRAPH}" "$${MTP_NUM_TOKENS}"
+          "$${EP_SIZE:-2}" "$${DISABLE_CUDA_GRAPH}" "$${MTP_NUM_TOKENS}"
         exec python3 -m sglang.launch_server "$${args[@]}"

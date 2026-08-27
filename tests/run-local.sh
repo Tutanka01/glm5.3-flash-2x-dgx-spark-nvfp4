@@ -10,7 +10,7 @@ done
 
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v tests/test_validate_checkpoint.py
 
-for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch8 256k 32k-mtp 32k-eager; do
+for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 256k 256k-graphs 32k-mtp 32k-eager; do
   GLM53_ENV_FILE=tests/fixtures/valid.env scripts/validate-env.sh "$profile" >/dev/null
 done
 

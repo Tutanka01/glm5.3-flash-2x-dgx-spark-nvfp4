@@ -124,6 +124,24 @@ Capturez les deux logs avant toute modification.
 
 Revenez à `32k`. Le profil `32k-mtp` dépend de correctifs supplémentaires pour le draft NEXTN quantifié et ne doit être essayé qu'après une validation complète sans spéculation.
 
+## Échec de capture CUDA graphs à 256k
+
+Le profil `256k-graphs` réactive la capture des graphes à 262 144 tokens avec `CUDA_GRAPH_MAX_BS=1`. Si le boot échoue sur une erreur mémoire pendant la capture (« CUDA out of memory » côté capture/replay) :
+
+- baissez `MEM_FRACTION_STATIC` à 0,88 dans une copie du profil (le validateur accepte jusqu'à 0,92 mais émet un avertissement au-delà de 0,90) ;
+- sinon retombez sur le profil `256k` eager, qui reste la sonde de référence.
+
+Un OOM pendant la capture n'est pas silencieux : le launcher collecte les logs et arrête les deux rangs.
+
+## Combinaisons de knobs refusées
+
+Le validateur fail-closed refuse deux combinaisons instables plutôt que de laisser SGLang échouer au boot :
+
+- `ENABLE_MIXED_CHUNK=1` avec `MTP_NUM_TOKENS>0` : le prefill mélangé n'est pas supporté sous spéculation. Gardez `ENABLE_MIXED_CHUNK` pour les profils sans MTP ;
+- `EP_SIZE` autre que 1 ou 2 : la recette fixe `--tp-size 2`.
+
+Toute autre valeur doit passer par une modification consciente du validateur et une nouvelle ligne d'audit.
+
 ## Le boot dépasse une heure
 
 Un MoE de 320B peut charger lentement, mais une heure sans API doit être traitée comme un échec. Le launcher collecte les logs et arrête les rangs. Cherchez le dernier progrès de chargement, une compilation JIT, un OOM ou une attente NCCL.
