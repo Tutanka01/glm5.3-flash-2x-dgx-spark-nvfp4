@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import statistics
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -202,6 +204,15 @@ def median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
+def percentile(values: list[float], fraction: float) -> float | None:
+    """Nearest-rank percentile; returns None when there is no data."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, math.ceil(fraction * len(ordered)) - 1))
+    return ordered[index]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8888/v1")
@@ -212,12 +223,20 @@ def main() -> int:
     parser.add_argument("--compare-api-key-env", default="ZAI_API_KEY")
     parser.add_argument("--prompts", type=Path)
     parser.add_argument("--runs", type=int, default=2)
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="number of requests kept in flight per target (sub-agent simulation)",
+    )
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     if args.runs < 1 or args.runs > 20:
         parser.error("--runs must be between 1 and 20")
+    if args.concurrency < 1 or args.concurrency > 64:
+        parser.error("--concurrency must be between 1 and 64")
     prompts = load_prompts(args.prompts)
     targets: list[tuple[str, str, str, str | None]] = []
     add_target(targets, "local", args.base_url, args.model, args.api_key_env)
@@ -230,29 +249,67 @@ def main() -> int:
     )
 
     results: list[Result] = []
+    wall_seconds: dict[str, float] = {}
     for target_name, base_url, model, api_key in targets:
-        for prompt in prompts:
-            for run_number in range(1, args.runs + 1):
+        tasks = [
+            (prompt, run_number)
+            for prompt in prompts
+            for run_number in range(1, args.runs + 1)
+        ]
+        target_results: list[Result] = []
+        phase_started = time.perf_counter()
+        if args.concurrency == 1:
+            for prompt, run_number in tasks:
                 print(f"[{target_name}] {prompt['name']} run {run_number}/{args.runs}", flush=True)
-                result = stream_once(
-                    target_name=target_name,
-                    base_url=base_url,
-                    model=model,
-                    api_key=api_key,
-                    prompt=prompt,
-                    run_number=run_number,
-                    timeout=args.timeout,
+                target_results.append(
+                    stream_once(
+                        target_name=target_name,
+                        base_url=base_url,
+                        model=model,
+                        api_key=api_key,
+                        prompt=prompt,
+                        run_number=run_number,
+                        timeout=args.timeout,
+                    )
                 )
-                results.append(result)
-                print(
-                    f"  ok={result.ok} ttft={result.ttft_seconds} "
-                    f"total={result.total_seconds:.3f}s tok/s={result.decode_tokens_per_second}",
-                    flush=True,
-                )
+        else:
+            print(
+                f"[{target_name}] running {len(tasks)} requests with "
+                f"concurrency {args.concurrency}",
+                flush=True,
+            )
+            with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+                pending = {
+                    pool.submit(
+                        stream_once,
+                        target_name=target_name,
+                        base_url=base_url,
+                        model=model,
+                        api_key=api_key,
+                        prompt=prompt,
+                        run_number=run_number,
+                        timeout=args.timeout,
+                    ): (prompt["name"], run_number)
+                    for prompt, run_number in tasks
+                }
+                for future in as_completed(pending):
+                    prompt_name, run_number = pending[future]
+                    result = future.result()
+                    target_results.append(result)
+                    print(
+                        f"[{target_name}] {prompt_name} run {run_number}/{args.runs} "
+                        f"ok={result.ok} ttft={result.ttft_seconds} "
+                        f"total={result.total_seconds:.3f}s "
+                        f"tok/s={result.decode_tokens_per_second}",
+                        flush=True,
+                    )
+        wall_seconds[target_name] = time.perf_counter() - phase_started
+        results.extend(target_results)
 
     print("\nMedian summary")
     for target_name, *_ in targets:
         subset = [result for result in results if result.target == target_name and result.ok]
+        attempts = sum(r.target == target_name for r in results)
         ttfts = [result.ttft_seconds for result in subset if result.ttft_seconds is not None]
         rates = [
             result.decode_tokens_per_second
@@ -260,10 +317,22 @@ def main() -> int:
             if result.decode_tokens_per_second is not None
         ]
         totals = [result.total_seconds for result in subset]
-        print(
-            f"  {target_name}: success={len(subset)}/{sum(r.target == target_name for r in results)} "
-            f"TTFT={median(ttfts)}s total={median(totals)}s decode={median(rates)} tok/s"
+        line = (
+            f"  {target_name}: success={len(subset)}/{attempts} "
+            f"TTFT={median(ttfts)}s (p99={percentile(ttfts, 0.99)}s) "
+            f"total={median(totals)}s decode={median(rates)} tok/s"
         )
+        # Aggregate goodput only means something when requests actually overlap.
+        if args.concurrency > 1 and subset:
+            completion_tokens = sum(
+                result.completion_tokens
+                for result in subset
+                if isinstance(result.completion_tokens, int)
+            )
+            wall = wall_seconds[target_name]
+            aggregate = completion_tokens / wall if wall > 0 else 0.0
+            line += f" aggregate={aggregate:.1f} tok/s over {wall:.2f}s"
+        print(line)
 
     output = args.output
     if output is None:
@@ -272,6 +341,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     artifact = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "concurrency": args.concurrency,
         "targets": [
             {"name": name, "base_url": url, "model": model} for name, url, model, _ in targets
         ],

@@ -56,7 +56,7 @@ run_profile() {
   rm -f "$output_file"
 }
 
-for profile in 32k 64k 128k 256k 32k-mtp 32k-eager; do
+for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch8 256k 32k-mtp 32k-eager; do
   run_profile "$profile"
 done
 printf 'SGLang compose command profiles: OK\n'

@@ -138,21 +138,41 @@ Pour suivre les logs en continu, sélectionnez un seul nœud :
 
 | Profil | Contexte | Requêtes | MoE | Graphes | MTP | Usage recommandé |
 |---|---:|---:|---|---|---:|---|
-| `32k` | 32K | 1 | FlashInfer CUTLASS | oui | non | premier démarrage |
-| `64k` | 64K | 1 | FlashInfer CUTLASS | oui | non | deuxième étape |
-| `128k` | 128K | 1 | FlashInfer CUTLASS | oui | non | expérimental |
-| `256k` | 256K | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
-| `32k-mtp` | 32K | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
-| `32k-eager` | 32K | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
+| `32k` | 32 768 | 1 | FlashInfer CUTLASS | oui | non | premier démarrage |
+| `32k-batch4` | 32 768 | 4 | FlashInfer CUTLASS | oui | non | sous-agents OpenCode |
+| `32k-batch8` | 32 768 | 8 | FlashInfer CUTLASS | oui | non | concurrence élevée, expérimental |
+| `64k` | 65 536 | 1 | FlashInfer CUTLASS | oui | non | deuxième étape |
+| `128k` | 131 072 | 1 | FlashInfer CUTLASS | oui | non | long contexte mono-requête |
+| `128k-batch4` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | sous-agents sur longs contextes |
+| `128k-batch8` | 131 072 | 8 | FlashInfer CUTLASS | oui | non | longs contextes + forte concurrence |
+| `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | recherche de la limite mémoire |
+| `32k-mtp` | 32 768 | 1 | FlashInfer CUTLASS | oui | 5 étapes | après validation sans MTP |
+| `32k-eager` | 32 768 | 1 | FlashInfer CUTLASS | non | non | diagnostic sans CUDA graphs |
+
+Les noms de profils sont des abréviations : `128k` correspond à `MAX_MODEL_LEN=131072`, soit 131 072 tokens (128 × 1024).
 
 Arrêtez toujours le profil actif avant d'en charger un autre :
 
 ```bash
 ./stop-glm53.sh --profile 32k
-./start-glm53.sh 64k
+./start-glm53.sh 32k-batch4
 ```
 
 Progressez dans l'ordre `32k` → `64k` → `128k` → `256k`, puis testez MTP. Utilisez `32k-eager` uniquement pour isoler un problème de capture ou de replay CUDA graphs.
+
+## Concurrence et sous-agents
+
+Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un choix de fiabilité pour le premier démarrage, pas une limite du modèle. Les profils `32k-batch4` et `32k-batch8` lèvent cette limite et permettent à OpenCode de lancer plusieurs sous-agents en parallèle.
+
+À savoir en passant au batché :
+
+- le débit de décode **par requête** baisse légèrement (la bande passante mémoire est partagée), mais le débit **agrégé** augmente nettement ;
+- le radix cache de SGLang est actif : les requêtes qui partagent un préfixe identique (system prompt des sous-agents) réutilisent le KV et un préfill quasi gratuit ;
+- si le garde mémoire se déclenche ou que le préfill échoue sur `32k-batch8`, revenez à `32k-batch4` ou remettez `MAX_NUM_BATCHED_TOKENS=4096`.
+
+Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
+
+Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark).
 
 ## Connexion depuis OpenCode
 
@@ -182,6 +202,12 @@ Le benchmark intégré mesure le TTFT, la durée totale et le débit de décodag
 
 ```bash
 ./bench-glm53.py --runs 3
+```
+
+Pour simuler des sous-agents et mesurer le comportement en charge, gardez N requêtes en vol simultanées. Le résumé affiche alors le TTFT p99 et le débit agrégé (goodput) :
+
+```bash
+./bench-glm53.py --runs 3 --concurrency 4
 ```
 
 Pour comparer une seconde API compatible OpenAI avec les mêmes prompts :
