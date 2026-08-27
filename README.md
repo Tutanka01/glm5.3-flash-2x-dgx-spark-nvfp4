@@ -173,7 +173,7 @@ Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un ch
 
 Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
 
-Le MTP reste le levier le moins validé de la recette (correctifs draft NEXTN supplémentaires) et n'est activé nulle part ailleurs que dans `32k-mtp` et `128k-batch4-mtp`. Le profil `256k` est incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées. Validez chaque brique séparément (`32k-mtp` puis `128k-batch4`) avant de charger la combinaison.
+Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Le profil `256k` reste incompatible avec le MTP en l'état car les CUDA graphs y sont désactivées.
 
 Validez chaque palier avec le bench en mode concurrence avant de l'adopter (voir section Benchmark).
 
