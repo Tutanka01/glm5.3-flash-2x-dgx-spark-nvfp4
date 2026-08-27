@@ -119,7 +119,7 @@ if not 0.70 <= value <= 0.90:
     raise SystemExit("MEM_FRACTION_STATIC must be between 0.70 and 0.90")
 PY
 
-case "${CONTAINER_MEMORY_LIMIT:-112g}" in
+case "${CONTAINER_MEMORY_LIMIT:-120g}" in
   [1-9][0-9]g|1[01][0-9]g|12[0-7]g) ;;
   *) glm53_die "CONTAINER_MEMORY_LIMIT must be an integer between 10g and 127g" ;;
 esac
@@ -150,4 +150,4 @@ printf '  context/requests/prefill: %s / %s / %s\n' \
 printf '  MoE/DSA/KV: %s / %s / %s\n' "$MOE_BACKEND" "$DSA_DECODE_BACKEND" "$KV_CACHE_DTYPE"
 printf '  graphs-disabled/MTP: %s / %s\n' "$DISABLE_CUDA_GRAPH" "$MTP_NUM_TOKENS"
 printf '  memory: static=%s container-limit=%s\n' \
-  "$MEM_FRACTION_STATIC" "${CONTAINER_MEMORY_LIMIT:-112g}"
+  "$MEM_FRACTION_STATIC" "${CONTAINER_MEMORY_LIMIT:-120g}"

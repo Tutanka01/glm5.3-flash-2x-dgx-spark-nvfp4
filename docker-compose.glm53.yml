@@ -10,8 +10,8 @@ services:
 
     # GB10 exposes one unified CPU/GPU memory pool. Equal hard and swap limits
     # keep a failed load from turning into host-wide swap thrashing.
-    mem_limit: ${CONTAINER_MEMORY_LIMIT:-112g}
-    memswap_limit: ${CONTAINER_MEMORY_LIMIT:-112g}
+    mem_limit: ${CONTAINER_MEMORY_LIMIT:-120g}
+    memswap_limit: ${CONTAINER_MEMORY_LIMIT:-120g}
     restart: "${RESTART_POLICY:-no}"
     stop_grace_period: ${STOP_GRACE_PERIOD:-30s}
 
@@ -37,6 +37,7 @@ services:
       TOKENIZERS_PARALLELISM: "false"
       PYTHONUNBUFFERED: "1"
       XDG_CACHE_HOME: /cache/huggingface/sglang-cache
+      SGLANG_CACHE_DIR: /cache/huggingface/sglang-cache
       TRITON_CACHE_DIR: /cache/huggingface/triton-cache
       TORCH_EXTENSIONS_DIR: /cache/huggingface/torch-extensions
       CUDA_CACHE_PATH: /cache/huggingface/cuda-cache
@@ -55,7 +56,7 @@ services:
       MAX_MODEL_LEN: "${MAX_MODEL_LEN:-32768}"
       MAX_NUM_SEQS: "${MAX_NUM_SEQS:-1}"
       MAX_NUM_BATCHED_TOKENS: "${MAX_NUM_BATCHED_TOKENS:-4096}"
-      MEM_FRACTION_STATIC: "${MEM_FRACTION_STATIC:-0.80}"
+      MEM_FRACTION_STATIC: "${MEM_FRACTION_STATIC:-0.90}"
       KV_CACHE_DTYPE: "${KV_CACHE_DTYPE:-fp8_e4m3}"
       MOE_BACKEND: "${MOE_BACKEND:-flashinfer_cutlass}"
       DSA_PREFILL_BACKEND: "${DSA_PREFILL_BACKEND:-flashinfer_sparse_mla}"

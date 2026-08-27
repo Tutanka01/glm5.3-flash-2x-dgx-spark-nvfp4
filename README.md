@@ -202,7 +202,7 @@ Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de
 - validation exacte de 120 shards, 113 074 entrées et 37 152 poids experts quantifiés ;
 - vérification des hashes du tokenizer, du processor, de la generation config et du chat template ;
 - refus des fichiers exécutables inattendus dans le dépôt modèle ;
-- limites mémoire `mem_limit == memswap_limit == 112g` et surveillance de `MemAvailable` ;
+- limites mémoire `mem_limit == memswap_limit == 120g` et surveillance de `MemAvailable` ;
 - démarrage worker-first et arrêt coordonné en cas d'échec.
 
 Le runtime vLLM officiel du jour de sortie n'est pas utilisé : son chemin NoPE produit une sortie incorrecte sur GB10. L'image SGLang retenue contient six correctifs audités et dispose d'une validation TP=2 sur deux DGX Spark.

@@ -45,14 +45,14 @@ Le runtime utilise NCCL ≥ 2.21 et sélectionne automatiquement le GID RoCE v2.
 - désactivez le swap pendant la mise en service si possible ;
 - restez sur `32k`, une requête et sans MTP ;
 - inspectez `.glm53-guard-head.log` et le fichier worker équivalent ;
-- baissez `MEM_FRACTION_STATIC` par pas de `0.01` si nécessaire ;
+- conservez `MEM_FRACTION_STATIC=0.90`, valeur acceptée par le profil TP=2 publié ;
 - utilisez `32k-eager` pour exclure la capture CUDA graphs.
 
 Le garde arrête uniquement le conteneur portant les labels Compose exacts de cette recette.
 
 ## Mémoire KV insuffisante
 
-SGLang réserve les poids et le cache KV dans `MEM_FRACTION_STATIC`. Libérez d'abord la mémoire système, puis augmentez prudemment cette valeur sans dépasser `0.90`. Le cap conteneur de 112g reste une barrière supplémentaire.
+SGLang réserve les poids, le cache KV et l'état hybride KDA/Mamba dans `MEM_FRACTION_STATIC`. L'erreur `Not enough GPU memory for hybrid (mamba/linear-attention) state cache` avec une valeur négative de `total_rest_memory` indique que cette fraction est trop basse, pas trop haute. Le profil TP=2 publié et accepté utilise `MEM_FRACTION_STATIC=0.90`; la recette reprend donc cette valeur avec un plafond conteneur de `120g` et un garde hôte à 6 GiB.
 
 ## Blocage NCCL ou Gloo
 
