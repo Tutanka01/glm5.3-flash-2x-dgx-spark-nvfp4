@@ -375,7 +375,7 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | 240 008 tokens froids validés : chunk 1024, statique 0,88, récupération 3/3 |
 | `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | quarantaine ; capture bs=1 seule validée |
 | `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine : décode court seulement, froid >128K refusé |
-| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid 240K, Mamba BF16/5, statique 0,88 |
+| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid long, Mamba BF16/5, statique 0,88 ; 200K froid validé le 2026-08-28 (décode ×3 vs `256k`), plafond pool ≈ 210K tokens |
 | `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; aucune capacité froide prouvée |
 | `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | quarantaine ; retirer les graphes ne suffit pas à prouver 512K |
 | `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; CP=2 non validé sur ce runtime |

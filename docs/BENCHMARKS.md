@@ -27,6 +27,9 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 6` | 9/9 | 0,75 s | 0,82 s | 17,6 tok/s | 86,0 tok/s (55,6 s) | meilleur agrégé du cluster : ×2,06 vs MTP5 batché, ×2,7 vs sans spéculation ; pas de régression C6, wall ÷2,6 | `glm53-benchmark-20260828-103607.json` |
 | 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 7` | 9/9 | 1,01 s | 1,02 s | 17,1 tok/s | 78,0 tok/s (60,9 s) | début de régression : agrégé −9 % vs C6, TTFT médian +34 % | `glm53-benchmark-20260828-104719.json` |
 | 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 8` | 9/9 | 0,85 s | 1,21 s | 15,9 tok/s | 79,6 tok/s (60,0 s) | léger rebond d'agrégé mais p99 le plus haut du balayage ; sommet confirmé à C6 | `glm53-benchmark-20260828-104821.json` |
+| 2026-08-28 | `256k-dflash2-eager` | long froid 180 000 | 1/1 | 148,27 s | — | 40,47 tok/s | préfill 1 214,06 tok/s | 180 005 tokens après template, 3/3 aiguilles, API saine ; DFlash2 ×3,0 vs `256k` sans spéculation (13,48) ; chunk 2048, statique 0,88, mamba usage 0,80 au pire | `glm53-long-context-256k-dflash2-180000-20260828-134329.json` |
+| 2026-08-28 | `256k-dflash2-eager` | long froid 220 000 | 0/1 | — | — | — | — | échec propre : stream fermé sans aucun token (hash de chaîne vide), API saine après ; confirmé par les logs : **aucun prefill lancé**, refus d'admission — pool ≈ 210K tokens < 220K demandés | `glm53-long-context-256k-dflash2-220000-20260828-134711.json` |
+| 2026-08-28 | `256k-dflash2-eager` | long froid 200 000 | 1/1 | 162,56 s | — | 39,61 tok/s | préfill 1 230,42 tok/s | 200 012 tokens après template, 3/3 aiguilles, API saine ; usage pool ~0,95 — plafond pratique de la lane à statique 0,88 | `glm53-long-context-256k-dflash2-200000-20260828-135605.json` |
 
 ## Lecture des mesures du 2026-08-28
 
@@ -140,7 +143,7 @@ Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
 |---|---:|---|---|---|---|---|
 | `256k-mtp` | 240 000 | oui | 5 | FP8 | non | **échec** : préfill figé puis scheduler `-9`; quarantaine |
 | `256k` | 240 000 | non | non | FP8 | non | **réussi le 2026-08-28** : 240 008 tokens, récupération 3/3, API saine |
-| `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | à mesurer ; Mamba BF16/5, fenêtre draft 2048, statique 0,88 |
+| `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | **180 000 et 200 000 réussis le 2026-08-28** (3/3 aiguilles, API saine, décode ~40 tok/s) ; **220 000 refusé à l'admission** (aucun prefill loggé, pool ≈ 210K tokens) — dépasser ~210K exige un statique supérieur, essai explicite `--allow-unsafe-profile` |
 | `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
 | `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; évite le bug graph mais reste non sûr côté mémoire |
 | `512k-mtp-cp` | 480 000 | oui | 5 | FP8 | 2 rangs | à mesurer ; expérimental |
