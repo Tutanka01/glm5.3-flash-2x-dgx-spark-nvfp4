@@ -96,7 +96,12 @@ contient les logs des deux rangs, leur état Docker, la mémoire, le GPU et les
    été tué à C3 pendant trois prefills concurrents de 20K. Le profil publié
    sacrifie environ 118K tokens de pool pour survivre. Sur GB10, la mémoire
    unifiée disponible et les allocations transitoires comptent plus que la
-   capacité KV nominale.
+   capacité KV nominale. Deuxième confirmation le 28 août : le c8 à statique
+   0,92 n'a jamais atteint la readiness — le garde de démarrage du head a
+   coupé le conteneur (MemAvailable 6032 MiB < plancher 6144 MiB) pendant la
+   capture des graphes draft bs=8, avec 91,0 Go de poids + 4,1 Go de Mamba
+   40 slots déjà posés. Le profil tourne désormais à 0,90, la réserve du
+   `128k-dflash2-c4` validé.
 5. **Ne pas généraliser le chunk entre moteurs.** Le port vLLM/DFlash2 rapporte
    des segfaults de warmup sous `index_topk=2048`, donc nos profils DFlash2
    expérimentaux restent à 2048. En revanche, SGLang sans DFlash2 a réellement

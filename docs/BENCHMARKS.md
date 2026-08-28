@@ -18,6 +18,8 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-28 | `256k` | long froid 240 000 | 1/1 | 204,59 s | — | 13,48 tok/s | préfill 1 173,12 tok/s | 240 008 tokens après template, 3/3 aiguilles, API saine ; eager, sans MTP, chunk 1024, statique 0,88 | `glm53-long-context-256k-safe-20260828-073956.json` |
 | 2026-08-28 | `128k-dflash2` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 37,2 tok/s | — | DFlash2 C1 : ×2,6 vs sans spéculation, +29 % vs MTP5, TTFT intact ; concurrence et acceptation non encore mesurées | `glm53-benchmark-20260828-084231.json` |
 | 2026-08-28 | `128k-dflash2` | `--runs 3 --concurrency 4` | 9/9 | 31,14 s | 83,79 s | 37,3 tok/s | 35,8 tok/s (132,6 s) | files sérielles : `MAX_NUM_SEQS=1`, pas une mesure batched ; décode par flux préservé, ~26 s d'attente par requête en file | `glm53-benchmark-20260828-090034.json` |
+| 2026-08-28 | `128k-dflash2-c4` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 35,4 tok/s | — | C1 sur profil batché : −5 % vs profil mono, TTFT intact | `glm53-benchmark-20260828-092417.json` |
+| 2026-08-28 | `128k-dflash2-c4` | `--runs 3 --concurrency 4` | 9/9 | 0,71 s | 1,02 s | 18,0 tok/s | 67,2 tok/s (70,3 s) | meilleur agrégé mesuré : +61 % vs MTP5 batché, ×2,1 vs sans spéculation ; wall 70 s vs 145 s | `glm53-benchmark-20260828-092536.json` |
 
 ## Lecture des mesures du 2026-08-28
 
@@ -36,14 +38,38 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
   (35,8 tok/s) quasi égal au mono. Aucun crash ni retract et un décode par flux
   préservé à 37,3 tok/s : la file se comporte proprement. La mesure de
   concurrence réelle attend `128k-dflash2-c4` puis le balayage c8.
+- **DFlash2-c4 : meilleur des deux mondes, mesuré.** À concurrence 4, l'agrégé
+  atteint 67,2 tok/s (+61 % vs MTP5 batché, ×2,1 vs sans spéculation) avec un
+  TTFT médian de 0,71 s et un p99 de 1,02 s — MTP5 s'effondrait à 7,6 s/45,3 s
+  sur le même test, et le wall clock passe de 145 s à 70 s. Le décode par flux
+  partagé retombe à ~18 tok/s ; le dernier run dégagé remonte à 34,9 tok/s dès
+  que le batch se vide. Réserves du protocole : le p99 C4 reste 33 % au-dessus
+  de la référence sans spéculation (0,77 → 1,02 s), au-delà du garde strict de
+  10 % bien qu'excellent en absolu, et le gain C1 du profil batché est de +22 %
+  (35,4 tok/s) contre +29 % sur le profil mono.
 - **Rapprochement avec le port vLLM cité** : 46,9 tok/s C1 chaud sur code pur
   contre 37,2 ici sur le mix standard (sanity/coding/reasoning, température 0).
   Cohérent : le mix contient du raisonnement et de la prose, moins acceptés que
   le code.
 - **Non mesuré à ce stade** : taux d'acceptation par classe, égalité des sorties
-  déterministes, comportement batché réel (`128k-dflash2-c4`, balayage C1–C6 sur
-  `128k-dflash2-c8`). La promotion hors `experimental` attend ces points
-  (protocole dans [DFLASH2.md](DFLASH2.md)).
+  déterministes, balayage C1–C6 sur `128k-dflash2-c8`, stabilité longue et marge
+  mémoire. La promotion hors `experimental` attend ces points (protocole dans
+  [DFLASH2.md](DFLASH2.md)).
+- **Première tentative `128k-dflash2-c8` : arrêt au démarrage à 09:43, cause
+  identifiée.** Ce n'est ni un bug DFlash2 ni un crash CUDA : le garde mémoire
+  de démarrage du head a coupé le conteneur lui-même (`GUARD TRIP`,
+  `MemAvailable` 6032 MiB < plancher 6144 MiB ; `OOMKilled=false`, exit 137)
+  pendant la capture des graphes draft bs=8, alors qu'il ne restait que 5,81 Go
+  de marge GPU côté head à statique 0,92 (poids 91,0 Go + draft 1,65 Go + Mamba
+  40 slots ~4,1 Go + pools KV ~4,8 Go). Les warnings `NVRM NV_ERR_NO_MEMORY`
+  du driver corroborent l'épuisement de la mémoire unifiée ; le worker, mieux
+  doté (7,98 Go à la même étape), a survécu et n'a perdu le rang 0 qu'en
+  surface (`Broken pipe` TCPStore). Le garde a fait exactement son travail :
+  la veille au soir, un OOM kernel sur ce même head avait tué le scheduler
+  **et** `systemd`. Le profil est dérivé à statique 0,90 (~+2,4 Go de marge,
+  réserve identique au c4 validé) ; repli 0,88 si nouveau trip, après
+  `collect-glm53-report.sh`. Les rangs n'ont jamais atteint la readiness :
+  aucune conclusion sur DFlash2 en charge.
 
 ## Lecture des mesures du 2026-08-27
 

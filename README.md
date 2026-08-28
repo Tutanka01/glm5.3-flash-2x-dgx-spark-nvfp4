@@ -209,15 +209,18 @@ mesures actuelles sont :
 | Besoin | Profil de départ | Pourquoi |
 |---|---|---|
 | validation initiale ou faible trafic | `32k` | chemin le plus simple, une requête |
-| sous-agents et requêtes simultanées | `128k-batch4` | bon TTFT et 31,5 tok/s agrégés mesurés |
-| un flux interactif prioritaire | `128k-batch4-mtp` | environ 29 tok/s en mono-flux |
+| sous-agents et requêtes simultanées | `128k-dflash2-c4` | 67,2 tok/s agrégés et TTFT p99 1,0 s mesurés ; `128k-batch4` reste l'alternative éprouvée sans spéculation |
+| un flux interactif prioritaire | `128k-dflash2` | 37,2 tok/s mesurés, TTFT intact ; `128k-batch4-mtp` (29 tok/s) en repli épinglé |
 | diagnostic CUDA Graphs | `32k-eager` | retire uniquement les graphes |
 | contexte réel proche de 256K | `256k` | validé à 240 008 tokens froids : eager, sans MTP, préfill 1024, statique 0,88 |
 | contexte supérieur à 256K | aucun | profils 384/512K en quarantaine, non fiables sur TP2/GB10 |
-| décode mono-flux de prochaine génération | `128k-dflash2` | mesuré 37,2 tok/s mono (+29 % vs MTP5) ; `experimental` jusqu'à la validation acceptation + concurrence |
+| décode mono-flux de prochaine génération | `128k-dflash2` | mesuré 37,2 tok/s mono et 67,2 tok/s agrégés à C4 ; `experimental` jusqu'à la validation acceptation + stabilité |
 
 MTP accélère fortement un seul décode, mais dégrade le TTFT lors de rafales
 concurrentes. Pour plusieurs sous-agents, préférez donc `128k-batch4` sans MTP.
+La mesure du 28 août montre que `128k-dflash2-c4` combine les deux régimes
+(67,2 tok/s agrégés, TTFT p99 1,0 s), mais s'appuie sur l'image expérimentale
+DFlash2 et son drafter sous licence CC BY-NC-ND.
 
 Pour changer de profil, arrêtez toujours les deux rangs avant le redémarrage :
 
@@ -365,8 +368,8 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation MTP + EP=1 expérimentale |
 | `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation torch.compile expérimentale |
 | `128k-dflash2` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | démarrage C1 : Mamba BF16/5 slots, draft FA4 fenêtre 2048 ; 37,2 tok/s mesurés |
-| `128k-dflash2-c4` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | concurrence C4 : Mamba BF16/20 slots, statique 0,90 |
-| `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 : Mamba BF16/40 slots, statique 0,92 |
+| `128k-dflash2-c4` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | concurrence C4 : Mamba BF16/20 slots, statique 0,90 ; 67,2 tok/s agrégés mesurés |
+| `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 : Mamba BF16/40 slots, statique 0,90 ; 0,92 n'a jamais atteint la readiness (guard trip le 2026-08-28) |
 | `128k-dflash2-flashinfer` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | repli C1 si FA4 échoue sur SM121 |
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | 240 008 tokens froids validés : chunk 1024, statique 0,88, récupération 3/3 |
 | `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | quarantaine ; capture bs=1 seule validée |
@@ -402,7 +405,7 @@ Le profil `32k` n'accepte qu'une seule requête (`MAX_NUM_SEQS=1`) : c'est un ch
 
 Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte et la concurrence. Le pool KV est partagé entre les requêtes actives : si quatre conversations de 131k ne tiennent pas simultanément, SGLang met simplement les requêtes en excès en file d'attente au lieu de les rejeter. En usage agentique réel, peu de conversations remplissent tout le contexte, donc la concurrence utile est généralement supérieure au cas le pire.
 
-Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes.
+Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes. La mesure DFlash2 du 28 août les rend toutefois moins urgents : `128k-dflash2-c4` atteint 67,2 tok/s agrégés à C4 avec un TTFT p99 de 1,0 s, devant les deux régimes MTP, sur l'image expérimentale (voir [BENCHMARKS.md](docs/BENCHMARKS.md)).
 
 Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Le run froid `256k-mtp` du 27 août s'est figé vers 164K tokens traités, puis le scheduler a reçu `SIGKILL` ; ce profil est donc mis en quarantaine. À l'inverse, `256k` a réussi le 28 août avec 240 008 tokens après template, TTFT 204,59 s, préfill 1 173,12 tok/s, récupération 3/3 et API saine. Le profil conserve donc la configuration réellement prouvée : eager, sans MTP, chunk 1024 et statique 0,88. Le seuil vLLM/DFlash2 de 2048 n'est pas généralisé à SGLang. [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit en plus un crash au premier token de décode après de longs prefills lorsque les graphes sont actifs. Les profils 384K/512K restent explicitement non sûrs et requièrent `--allow-unsafe-profile`.
 
