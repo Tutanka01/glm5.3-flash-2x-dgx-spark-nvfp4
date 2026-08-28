@@ -53,7 +53,7 @@ Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
 |---|---:|---|---|---|---|---|
 | `256k-mtp` | 240 000 | oui | 5 | FP8 | non | **échec** : préfill figé puis scheduler `-9`; quarantaine |
 | `256k` | 240 000 | non | non | FP8 | non | **réussi le 2026-08-28** : 240 008 tokens, récupération 3/3, API saine |
-| `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | à mesurer ; pression draft supplémentaire, statique 0,84 |
+| `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | à mesurer ; Mamba BF16/5, fenêtre draft 2048, statique 0,88 |
 | `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
 | `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; évite le bug graph mais reste non sûr côté mémoire |
 | `512k-mtp-cp` | 480 000 | oui | 5 | FP8 | 2 rangs | à mesurer ; expérimental |

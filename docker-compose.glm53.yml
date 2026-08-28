@@ -69,6 +69,9 @@ services:
       SPECULATIVE_ALGORITHM: "${SPECULATIVE_ALGORITHM:-NONE}"
       DFLASH_DRAFT_MODEL_PATH: "${DFLASH_DRAFT_MODEL_PATH:-}"
       DFLASH_DRAFT_ATTENTION_BACKEND: "${DFLASH_DRAFT_ATTENTION_BACKEND:-}"
+      DFLASH_DRAFT_WINDOW_SIZE: "${DFLASH_DRAFT_WINDOW_SIZE:-}"
+      MAMBA_SSM_DTYPE: "${MAMBA_SSM_DTYPE:-}"
+      MAX_MAMBA_CACHE_SIZE: "${MAX_MAMBA_CACHE_SIZE:-}"
 
       # Optional optimization experiments (docs/OPTIMIZATION.md). The defaults
       # reproduce the validated recipe behavior exactly.
@@ -193,6 +196,12 @@ services:
         if [ "$${DISABLE_CUDA_GRAPH}" = "1" ]; then
           args+=(--disable-cuda-graph)
         fi
+        if [ -n "$${MAMBA_SSM_DTYPE:-}" ]; then
+          args+=(--mamba-ssm-dtype "$${MAMBA_SSM_DTYPE}")
+        fi
+        if [ -n "$${MAX_MAMBA_CACHE_SIZE:-}" ]; then
+          args+=(--max-mamba-cache-size "$${MAX_MAMBA_CACHE_SIZE}")
+        fi
         if [ "$${SPECULATIVE_ALGORITHM}" = "NEXTN" ]; then
           draft_tokens=$((MTP_NUM_TOKENS + 1))
           args+=(
@@ -207,6 +216,7 @@ services:
             --speculative-algorithm DFLASH
             --speculative-draft-model-path "$${DFLASH_DRAFT_MODEL_PATH}"
             --speculative-draft-attention-backend "$${DFLASH_DRAFT_ATTENTION_BACKEND}"
+            --speculative-draft-window-size "$${DFLASH_DRAFT_WINDOW_SIZE}"
           )
         fi
         args+=(--schedule-conservativeness "$${SCHEDULE_CONSERVATIVENESS:-1.0}")
@@ -224,9 +234,10 @@ services:
           )
         fi
 
-        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s EP=%s graphs-disabled=%s speculative=%s MTP=%s prefill-CP=%s/%s/%s\n' \
+        printf 'Starting SGLang GLM-5.3 rank=%s context=%s MoE=%s DSA=%s/%s EP=%s graphs-disabled=%s speculative=%s MTP=%s mamba=%s/%s draft-window=%s prefill-CP=%s/%s/%s\n' \
           "$${NODE_RANK}" "$${MAX_MODEL_LEN}" "$${MOE_BACKEND}" \
           "$${DSA_PREFILL_BACKEND}" "$${DSA_DECODE_BACKEND}" \
           "$${EP_SIZE:-2}" "$${DISABLE_CUDA_GRAPH}" "$${SPECULATIVE_ALGORITHM}" "$${MTP_NUM_TOKENS}" \
+          "$${MAMBA_SSM_DTYPE:-auto}" "$${MAX_MAMBA_CACHE_SIZE:-auto}" "$${DFLASH_DRAFT_WINDOW_SIZE:-full}" \
           "$${ENABLE_PREFILL_CP:-0}" "$${ATTN_CP_SIZE:-1}" "$${CP_STRATEGY:-interleave}"
         exec python3 -m sglang.launch_server "$${args[@]}"

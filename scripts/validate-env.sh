@@ -121,6 +121,15 @@ case "$SPECULATIVE_ALGORITHM" in
       fa4|flashinfer) ;;
       *) glm53_die "DFLASH_DRAFT_ATTENTION_BACKEND must be fa4 or flashinfer in this recipe" ;;
     esac
+    [ "$MAMBA_SSM_DTYPE" = "bfloat16" ] || \
+      glm53_die "DFLASH on GB10 requires MAMBA_SSM_DTYPE=bfloat16"
+    case "$MAX_MAMBA_CACHE_SIZE" in
+      ''|*[!0-9]*) glm53_die "DFLASH requires an integer MAX_MAMBA_CACHE_SIZE" ;;
+    esac
+    [ "$MAX_MAMBA_CACHE_SIZE" -ge $((MAX_NUM_SEQS * 5)) ] || \
+      glm53_die "DFLASH requires at least 5 Mamba slots per request"
+    [ "$DFLASH_DRAFT_WINDOW_SIZE" = "2048" ] || \
+      glm53_die "DFLASH_DRAFT_WINDOW_SIZE must match the drafter sliding window (2048)"
     ;;
   *) glm53_die "SPECULATIVE_ALGORITHM must be NONE, NEXTN or DFLASH" ;;
 esac

@@ -20,6 +20,9 @@ RUNNING_DISABLE_CUDA_GRAPH=""
 RUNNING_MTP_NUM_TOKENS=""
 RUNNING_PROFILE_TIER=""
 RUNNING_SPECULATIVE_ALGORITHM=""
+RUNNING_MAMBA_SSM_DTYPE=""
+RUNNING_MAX_MAMBA_CACHE_SIZE=""
+RUNNING_DFLASH_DRAFT_WINDOW_SIZE=""
 if [ -n "$HEAD_CONTAINER_ID" ]; then
   HEAD_CONTAINER_ENV="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
     "$HEAD_CONTAINER_ID" 2>/dev/null || true)"
@@ -32,6 +35,9 @@ if [ -n "$HEAD_CONTAINER_ID" ]; then
   RUNNING_MTP_NUM_TOKENS="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MTP_NUM_TOKENS=//p' | head -n 1)"
   RUNNING_PROFILE_TIER="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^PROFILE_TIER=//p' | head -n 1)"
   RUNNING_SPECULATIVE_ALGORITHM="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^SPECULATIVE_ALGORITHM=//p' | head -n 1)"
+  RUNNING_MAMBA_SSM_DTYPE="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MAMBA_SSM_DTYPE=//p' | head -n 1)"
+  RUNNING_MAX_MAMBA_CACHE_SIZE="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MAX_MAMBA_CACHE_SIZE=//p' | head -n 1)"
+  RUNNING_DFLASH_DRAFT_WINDOW_SIZE="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^DFLASH_DRAFT_WINDOW_SIZE=//p' | head -n 1)"
 fi
 
 if [ -n "$RUNNING_PROFILE" ] && [ "$RUNNING_PROFILE" != "unknown" ]; then
@@ -55,6 +61,12 @@ if [ -n "$RUNNING_MAX_MODEL_LEN" ]; then
     "${RUNNING_DISABLE_CUDA_GRAPH:-unknown}" "${RUNNING_MTP_NUM_TOKENS:-unknown}"
   printf 'Admission tier: %s\n' "${RUNNING_PROFILE_TIER:-unknown}"
   printf 'Speculation: %s\n' "${RUNNING_SPECULATIVE_ALGORITHM:-unknown}"
+  if [ "$RUNNING_SPECULATIVE_ALGORITHM" = "DFLASH" ]; then
+    printf 'DFlash memory: mamba-ssm=%s slots=%s draft-window=%s\n' \
+      "${RUNNING_MAMBA_SSM_DTYPE:-unknown}" \
+      "${RUNNING_MAX_MAMBA_CACHE_SIZE:-unknown}" \
+      "${RUNNING_DFLASH_DRAFT_WINDOW_SIZE:-unknown}"
+  fi
 fi
 printf 'Endpoint: http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"
 

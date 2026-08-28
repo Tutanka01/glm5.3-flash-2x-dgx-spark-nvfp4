@@ -47,9 +47,11 @@ Ces profils ne nécessitent aucune modification du compose ou du `.env` :
 | `128k-mtp-ep1` | décode mono, motif de communication | combine MTP5/graphs avec EP=1 pour mesurer all-reduce TP contre all-to-all EP=2 |
 | `128k-mtp-compile` | décode mono compilé | combine MTP5/graphs avec torch.compile borné à bs=1 ; démarrage plus long |
 | `256k` | capacité froide à 240k | validé à 240 008 tokens : eager, sans MTP, chunk 1024 et statique 0,88 |
-| `128k-dflash2` | décode spéculatif C1/C4 | image SGLang PR #36708, draft 1B BF16, FA4 et graphes |
-| `128k-dflash2-flashinfer` | repli DFlash2 | même expérience avec attention draft FlashInfer |
-| `256k-dflash2-eager` | DFlash2 + froid 240K | pression maximale, graphes coupés, chunk 2048, statique 0,84 |
+| `128k-dflash2` | décode spéculatif C1 | Mamba BF16/5 slots, draft 1B FA4 fenêtre 2048, graphes bs=1 |
+| `128k-dflash2-c4` | décode spéculatif C4 | Mamba BF16/20 slots, statique 0,90, graphes bs=4 |
+| `128k-dflash2-c8` | débit DFlash2 C5/C6 | Mamba BF16/40 slots, statique 0,92, graphes bs=8 |
+| `128k-dflash2-flashinfer` | repli DFlash2 C1 | même gate mémoire avec attention draft FlashInfer |
+| `256k-dflash2-eager` | DFlash2 + froid 240K | pression maximale, graphes coupés, chunk 2048, Mamba BF16/5, statique 0,88 |
 | `256k-graphs` | décode court avec limite 256k | ✅ 14,4 tok/s sur petits prompts ; capture bs=1 validée, capacité froide 256k non testée |
 | `256k-mtp` | décode court uniquement | quarantaine après `SIGKILL` du scheduler pendant le test froid 240k ; le client refuse >128k |
 | `384k-quality` | reproduction >256k sans compression KV supplémentaire | quarantaine : KV BF16, MTP, graphs et CP=2, aucune capacité prouvée |

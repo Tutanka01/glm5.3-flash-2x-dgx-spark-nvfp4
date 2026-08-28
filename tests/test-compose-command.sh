@@ -20,6 +20,7 @@ run_profile() {
   unset ENABLE_PREFILL_CP ATTN_CP_SIZE CP_STRATEGY
   unset PROFILE_TIER PROFILE_RUNTIME_IMAGE SPECULATIVE_ALGORITHM
   unset DFLASH_DRAFT_MODEL_PATH DFLASH_DRAFT_ATTENTION_BACKEND
+  unset DFLASH_DRAFT_WINDOW_SIZE MAMBA_SSM_DTYPE MAX_MAMBA_CACHE_SIZE
   set -a
   # shellcheck disable=SC1090
   source "$ROOT_DIR/profiles/$profile.env"
@@ -37,6 +38,9 @@ run_profile() {
   ENABLE_PREFILL_CP="${ENABLE_PREFILL_CP:-0}"; export ENABLE_PREFILL_CP
   ATTN_CP_SIZE="${ATTN_CP_SIZE:-1}"; export ATTN_CP_SIZE
   CP_STRATEGY="${CP_STRATEGY:-interleave}"; export CP_STRATEGY
+  DFLASH_DRAFT_WINDOW_SIZE="${DFLASH_DRAFT_WINDOW_SIZE:-}"; export DFLASH_DRAFT_WINDOW_SIZE
+  MAMBA_SSM_DTYPE="${MAMBA_SSM_DTYPE:-}"; export MAMBA_SSM_DTYPE
+  MAX_MAMBA_CACHE_SIZE="${MAX_MAMBA_CACHE_SIZE:-}"; export MAX_MAMBA_CACHE_SIZE
   if [ -z "${SPECULATIVE_ALGORITHM:-}" ]; then
     if [ "$MTP_NUM_TOKENS" -gt 0 ]; then
       SPECULATIVE_ALGORITHM=NEXTN
@@ -87,9 +91,17 @@ run_profile() {
     grep -Fx -- "$DFLASH_DRAFT_MODEL_PATH" "$output_file" >/dev/null
     grep -Fx -- '--speculative-draft-attention-backend' "$output_file" >/dev/null
     grep -Fx -- "$DFLASH_DRAFT_ATTENTION_BACKEND" "$output_file" >/dev/null
+    grep -Fx -- '--speculative-draft-window-size' "$output_file" >/dev/null
+    grep -Fx -- "$DFLASH_DRAFT_WINDOW_SIZE" "$output_file" >/dev/null
+    grep -Fx -- '--mamba-ssm-dtype' "$output_file" >/dev/null
+    grep -Fx -- "$MAMBA_SSM_DTYPE" "$output_file" >/dev/null
+    grep -Fx -- '--max-mamba-cache-size' "$output_file" >/dev/null
+    grep -Fx -- "$MAX_MAMBA_CACHE_SIZE" "$output_file" >/dev/null
     ! grep -Fx -- '--speculative-num-steps' "$output_file" >/dev/null
   else
     ! grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
+    ! grep -Fx -- '--mamba-ssm-dtype' "$output_file" >/dev/null
+    ! grep -Fx -- '--max-mamba-cache-size' "$output_file" >/dev/null
   fi
 
   grep -Fx -- '--schedule-conservativeness' "$output_file" >/dev/null
@@ -116,7 +128,7 @@ run_profile() {
   rm -f "$output_file"
 }
 
-for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 128k-dflash2 128k-dflash2-c8 128k-dflash2-flashinfer 256k 256k-graphs 256k-mtp 256k-dflash2-eager 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
+for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 128k-dflash2 128k-dflash2-c4 128k-dflash2-c8 128k-dflash2-flashinfer 256k 256k-graphs 256k-mtp 256k-dflash2-eager 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
   run_profile "$profile"
 done
 

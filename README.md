@@ -364,13 +364,14 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | ablation TP/EP expérimentale |
 | `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation MTP + EP=1 expérimentale |
 | `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation torch.compile expérimentale |
-| `128k-dflash2` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | SGLang PR #36708, draft FA4, image locale à construire |
-| `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 et balayage C1/C2/C4/C5/C6, statique 0,84 |
-| `128k-dflash2-flashinfer` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | repli si FA4 échoue sur SM121 |
+| `128k-dflash2` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | démarrage C1 : Mamba BF16/5 slots, draft FA4 fenêtre 2048 |
+| `128k-dflash2-c4` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | concurrence C4 : Mamba BF16/20 slots, statique 0,90 |
+| `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 : Mamba BF16/40 slots, statique 0,92 |
+| `128k-dflash2-flashinfer` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | repli C1 si FA4 échoue sur SM121 |
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | 240 008 tokens froids validés : chunk 1024, statique 0,88, récupération 3/3 |
 | `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | quarantaine ; capture bs=1 seule validée |
 | `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine : décode court seulement, froid >128K refusé |
-| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid 240K, statique 0,84 |
+| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid 240K, Mamba BF16/5, statique 0,88 |
 | `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; aucune capacité froide prouvée |
 | `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | quarantaine ; retirer les graphes ne suffit pas à prouver 512K |
 | `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; CP=2 non validé sur ce runtime |
