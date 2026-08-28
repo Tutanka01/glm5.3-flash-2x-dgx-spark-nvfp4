@@ -14,6 +14,8 @@ HEAD_CONTAINER_ENV=""
 RUNNING_PROFILE=""
 RUNNING_MAX_MODEL_LEN=""
 RUNNING_MAX_NUM_SEQS=""
+RUNNING_MAX_NUM_BATCHED_TOKENS=""
+RUNNING_MEM_FRACTION_STATIC=""
 RUNNING_DISABLE_CUDA_GRAPH=""
 RUNNING_MTP_NUM_TOKENS=""
 if [ -n "$HEAD_CONTAINER_ID" ]; then
@@ -22,6 +24,8 @@ if [ -n "$HEAD_CONTAINER_ID" ]; then
   RUNNING_PROFILE="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^GLM53_PROFILE_NAME=//p' | head -n 1)"
   RUNNING_MAX_MODEL_LEN="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MAX_MODEL_LEN=//p' | head -n 1)"
   RUNNING_MAX_NUM_SEQS="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MAX_NUM_SEQS=//p' | head -n 1)"
+  RUNNING_MAX_NUM_BATCHED_TOKENS="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MAX_NUM_BATCHED_TOKENS=//p' | head -n 1)"
+  RUNNING_MEM_FRACTION_STATIC="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MEM_FRACTION_STATIC=//p' | head -n 1)"
   RUNNING_DISABLE_CUDA_GRAPH="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^DISABLE_CUDA_GRAPH=//p' | head -n 1)"
   RUNNING_MTP_NUM_TOKENS="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MTP_NUM_TOKENS=//p' | head -n 1)"
 fi
@@ -40,11 +44,41 @@ else
   fi
 fi
 if [ -n "$RUNNING_MAX_MODEL_LEN" ]; then
-  printf 'Runtime: context=%s requests=%s graphs-disabled=%s MTP=%s\n' \
+  printf 'Runtime: context=%s requests=%s prefill-chunk=%s static=%s graphs-disabled=%s MTP=%s\n' \
     "$RUNNING_MAX_MODEL_LEN" "${RUNNING_MAX_NUM_SEQS:-unknown}" \
+    "${RUNNING_MAX_NUM_BATCHED_TOKENS:-unknown}" \
+    "${RUNNING_MEM_FRACTION_STATIC:-unknown}" \
     "${RUNNING_DISABLE_CUDA_GRAPH:-unknown}" "${RUNNING_MTP_NUM_TOKENS:-unknown}"
 fi
 printf 'Endpoint: http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"
+
+STATUS_RESULT=0
+if [ -n "$RUNNING_MAX_MODEL_LEN" ] && [ "$RUNNING_MAX_MODEL_LEN" -gt 131072 ]; then
+  if python3 - \
+    "$RUNNING_MAX_NUM_SEQS" "$RUNNING_MAX_NUM_BATCHED_TOKENS" \
+    "$RUNNING_MEM_FRACTION_STATIC" "$RUNNING_DISABLE_CUDA_GRAPH" \
+    "$RUNNING_MTP_NUM_TOKENS" <<'PY'
+import sys
+
+try:
+    requests, chunk, static, graphs_disabled, mtp = (
+        int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]),
+        int(sys.argv[4]), int(sys.argv[5]),
+    )
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(
+    0 if requests == 1 and chunk <= 2048 and static <= 0.88
+    and graphs_disabled == 1 and mtp == 0 else 1
+)
+PY
+  then
+    printf 'Cold >128k preflight: PASS (reliability configuration)\n'
+  else
+    printf 'Cold >128k preflight: REFUSED (use profile 256k for a 240k capacity test)\n' >&2
+    STATUS_RESULT=1
+  fi
+fi
 
 printf '\n===== HEAD / rank 0 =====\n'
 NODE_RANK=0 HEADLESS= glm53_compose ps || true
@@ -94,7 +128,6 @@ else
   printf 'tokenizer not ready (the HTTP front end may be loading or shutting down)\n'
 fi
 
-STATUS_RESULT=0
 guard_pid_file="$ROOT_DIR/.glm53-guard-head.pid"
 HEAD_GUARD_ACTIVE=0
 if [ -s "$guard_pid_file" ]; then

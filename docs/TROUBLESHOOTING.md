@@ -45,12 +45,14 @@ Le runtime utilise NCCL ≥ 2.21 et sélectionne automatiquement le GID RoCE v2.
 - désactivez le swap pendant la mise en service si possible ;
 - restez sur `32k`, une requête et sans MTP ;
 - inspectez `.glm53-guard-head.log` et le fichier worker équivalent ;
-- conservez `MEM_FRACTION_STATIC=0.90`, valeur acceptée par le profil TP=2 publié ;
+- conservez la valeur du profil au lieu de la surcharger : 0,90 pour le socle
+  32K–128K, 0,88 pour le profil de fiabilité `256k` ;
 - utilisez `32k-eager` pour exclure la capture CUDA graphs.
 
 Le garde arrête uniquement le conteneur portant les labels Compose exacts de cette recette.
 
-Le garde mémoire est exclusivement un garde de **démarrage**. Il doit être
+Le garde mémoire est exclusivement un garde de **démarrage**. Il attend une
+tokenisation réelle (pas seulement l'ouverture de `/v1/models`) et doit être
 désarmé avant le smoke test et avant toute charge réelle. Après la readiness,
 `status-glm53.sh` retourne une erreur si le garde du head est encore actif.
 
@@ -71,7 +73,7 @@ refaites un démarrage complet du profil.
 
 ## Mémoire KV insuffisante
 
-SGLang réserve les poids, le cache KV et l'état hybride KDA/Mamba dans `MEM_FRACTION_STATIC`. L'erreur `Not enough GPU memory for hybrid (mamba/linear-attention) state cache` avec une valeur négative de `total_rest_memory` indique que cette fraction est trop basse, pas trop haute. Le profil TP=2 publié et accepté utilise `MEM_FRACTION_STATIC=0.90`; la recette reprend donc cette valeur avec un plafond conteneur de `120g` et un garde hôte à 6 GiB.
+SGLang réserve les poids, le cache KV et l'état hybride KDA/Mamba dans `MEM_FRACTION_STATIC`. L'erreur `Not enough GPU memory for hybrid (mamba/linear-attention) state cache` avec une valeur négative de `total_rest_memory` indique que cette fraction est trop basse, pas trop haute. Le socle TP=2 32K–128K utilise `MEM_FRACTION_STATIC=0.90`. Le profil `256k` utilise volontairement 0,88 pour rendre environ 2,56 Gio à l'exécution dynamique sur une machine de 128 Gio ; si ce profil ne passe pas le démarrage complet, n'augmentez pas la valeur puis n'envoyez pas 240K : conservez les logs et revenez à 128K.
 
 ## Blocage NCCL ou Gloo
 
@@ -91,27 +93,47 @@ Arrêtez-le. `HF_HUB_OFFLINE=1` et `TRANSFORMERS_OFFLINE=1` doivent rester actif
 
 ## Le modèle répond mais `start-glm53.sh` affiche encore `Still loading`
 
-Les anciennes versions utilisaient `/health` pour le garde mémoire et le healthcheck Docker. Sur ce runtime, cet endpoint peut déclencher une passe synthétique de 64 tokens ; avec une seule requête active, les sondes répétées pouvaient retarder `/v1/models` indéfiniment. La recette utilise désormais uniquement `/v1/models`, avec un délai de 30 secondes, et vérifie que l'identifiant servi est exactement celui attendu.
+Les anciennes versions utilisaient `/health` pour le garde mémoire et le healthcheck Docker. Sur ce runtime, cet endpoint peut déclencher une passe synthétique de 64 tokens ; avec une seule requête active, les sondes répétées pouvaient retarder `/v1/models` indéfiniment. La recette sonde désormais `/v1/models`, vérifie l'identifiant exact, puis exige une réponse tokenizer valide avant d'annoncer le serveur prêt.
 
 ## Le benchmark long-contexte reçoit `HTTP 503` sur `/tokenize`
 
-Un `503 Service Unavailable` ne signifie pas que la route tokenizer est
-incompatible. Il signifie que le frontal HTTP répond encore, mais que le moteur
-d'inférence est en chargement, en cours d'arrêt, ou n'est plus vivant. Vérifiez
-l'état des deux rangs avant de relancer le benchmark :
+Si le corps HTML mentionne **Squid**, la requête loopback a été envoyée au proxy :
+ce n'est pas une réponse de SGLang. La recette courante impose un accès direct
+pour `127.0.0.1`, `localhost` et les sondes du fabric ; `export no_proxy=...`
+n'est plus nécessaire.
+
+Un 503 JSON ou texte provenant réellement de SGLang signifie que le frontal
+répond encore, mais que le moteur d'inférence charge, s'arrête ou n'est plus
+vivant. Vérifiez l'état des deux rangs avant de relancer :
 
 ```bash
-./status-glm53.sh 256k-mtp
-./logs-glm53.sh --profile 256k-mtp --node both --tail 200
+./status-glm53.sh 256k
+./logs-glm53.sh --profile 256k --node both --tail 200
 ```
 
 Le client long-contexte réessaie désormais ces erreurs transitoires pendant
-60 secondes et affiche séparément l'état de `/v1/models`. Un journal contenant
+60 secondes et affiche séparément l'état de `/v1/models`. Le démarrage n'annonce
+plus « prêt » avant une réponse valide du tokenizer. Un journal contenant
 `SIGTERM received`, puis `SystemExit: 0`, décrit un arrêt externe propre et non
-un crash de kernel. Relancez `./start-glm53.sh 256k-mtp`, attendez son message
-final indiquant que l'API est prête, confirmez `tokenizer ready` avec la commande
-de statut, puis lancez le benchmark. N'exécutez pas `stop-glm53.sh`,
+un crash de kernel. Relancez `./start-glm53.sh 256k`, attendez son message final,
+confirmez `tokenizer ready` avec la commande de statut, puis lancez le benchmark.
+N'exécutez pas `stop-glm53.sh`,
 `docker compose stop/down` ou un arrêt de conteneur pendant le test.
+
+## Scheduler `exit code -9` pendant un préfill 240K
+
+`-9` est un `SIGKILL`, pas une exception Python ou CUDA récupérable. Sur le run
+du 27 août, le préfill `256k-mtp` a progressé jusqu'à environ 164K tokens, s'est
+tu pendant plus de huit minutes, puis le scheduler a été tué. Avec la limite
+conteneur de 120 Gio et 128 Gio de mémoire CPU/GPU unifiée, cette signature est
+compatible avec une mise à mort par pression mémoire/cgroup ; le log applicatif
+seul ne permet pas de distinguer le cgroup d'un OOM killer hôte.
+
+La correction n'est pas de relancer le même profil. Utilisez `256k`, qui retire
+les graphes et MTP, passe le chunk 4096 → 1024 et la fraction statique 0,90 →
+0,88. `bench-long-context.py` inspecte le profil effectif et refuse désormais
+automatiquement `256k-mtp` au-dessus de 128K. Un override explicite existe pour
+le diagnostic, mais il rétablit volontairement le risque de crash.
 
 ## `Permission denied` dans `/cache/huggingface`
 

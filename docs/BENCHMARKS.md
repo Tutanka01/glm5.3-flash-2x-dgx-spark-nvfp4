@@ -50,25 +50,28 @@ Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
 
 | Profil | Cible froide | Graphes | MTP | KV | Préfill CP | État |
 |---|---:|---|---|---|---|---|
-| `256k-mtp` | 240 000 | oui | 5 | FP8 | non | à mesurer |
+| `256k-mtp` | 240 000 | oui | 5 | FP8 | non | **échec** : préfill figé puis scheduler `-9`; quarantaine |
+| `256k` | 240 000 | non | non | FP8 | non | nouvelle recette de fiabilité à mesurer |
 | `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
-| `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; chemin sûr du bug graph |
+| `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; évite le bug graph mais reste non sûr côté mémoire |
 | `512k-mtp-cp` | 480 000 | oui | 5 | FP8 | 2 rangs | à mesurer ; expérimental |
 
 Commande canonique :
 
 ```bash
 ./bench-long-context.py \
-  --target-tokens 480000 \
+  --target-tokens 240000 \
   --cold \
-  --label 512k-mtp-cp
+  --label 256k-safe
 ```
 
-Le client calibre le texte avec l'endpoint tokenizer du serveur, place trois
+Cette commande suppose que `./start-glm53.sh 256k` a lancé le profil réellement
+actif. `--label` ne change pas le profil. Le client calibre le texte avec l'endpoint tokenizer du serveur, place trois
 aiguilles vers 5 %, 50 % et 95 %, mesure le TTFT/préfill et le décode, puis
 interroge `/v1/models` après la réponse. La ligne ne passe que si les trois
-codes sont retrouvés et si l'API est encore saine. Utilisez une montée par
-paliers 300k → 400k → 480k, avec `--cold` à chaque fois.
+codes sont retrouvés et si l'API est encore saine. Au-dessus de 128K, il refuse
+automatiquement un profil qui réactive MTP, les graphes, un chunk trop grand ou
+une fraction statique trop haute.
 
 Pourquoi ce protocole est bloquant : [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550)
 rapporte un crash de replay CUDA graph au premier token après un préfill froid

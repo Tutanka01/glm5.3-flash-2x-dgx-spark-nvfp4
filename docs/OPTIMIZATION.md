@@ -46,8 +46,9 @@ Ces profils ne nécessitent aucune modification du compose ou du `.env` :
 | `128k-batch4-8k` | drain des prefills longs | `MAX_NUM_BATCHED_TOKENS=8192` divise par deux les rounds de préfill ; surveiller le garde mémoire |
 | `128k-mtp-ep1` | décode mono, motif de communication | combine MTP5/graphs avec EP=1 pour mesurer all-reduce TP contre all-to-all EP=2 |
 | `128k-mtp-compile` | décode mono compilé | combine MTP5/graphs avec torch.compile borné à bs=1 ; démarrage plus long |
+| `256k` | capacité froide à 240k | profil de fiabilité : eager, sans MTP, chunk 1024 et statique 0,88 |
 | `256k-graphs` | décode court avec limite 256k | ✅ 14,4 tok/s sur petits prompts ; capture bs=1 validée, capacité froide 256k non testée |
-| `256k-mtp` | première marche MTP à 256k | combine graphs bs=1 et MTP 5 étapes ; exécuter le test froid à 240k avant adoption |
+| `256k-mtp` | décode court uniquement | quarantaine après `SIGKILL` du scheduler pendant le test froid 240k ; le client refuse >128k |
 | `384k-quality` | >256k sans compression KV supplémentaire | KV BF16, MTP, graphs et préfill CP=2 ; cible froide initiale 360k |
 | `512k-mtp-eager` | >256k robuste | MTP 5, graphes désactivés ; contourne le crash amont >262k au prix du décode eager |
 | `512k-mtp-cp` | >256k rapide | MTP + graphs, préfill DSA partagé sur 2 rangs ; cible 480k (~240k/rang) |
@@ -59,8 +60,8 @@ Notes :
   modèle cible vérifie chaque token drafté. Ajuster `MTP_NUM_TOKENS` ne crée pas
   une nouvelle quantification ; le smoke et les tests déterministes restent
   obligatoires pour détecter un bug d'implémentation ;
-- `256k-graphs` et `256k-mtp` : si la capture OOM, baissez
-  `MEM_FRACTION_STATIC` à 0,88 ou retombez sur `256k` (eager) ;
+- pour toute capacité froide à 240k, utilisez `256k`. Ne transposez pas MTP ou
+  les graphes avant que ce run n'ait produit un JSON `ok=true` ;
 - une limite configurée n'alloue pas `contexte × requêtes` de KV à l'avance :
   SGLang remplit un pool issu de la mémoire restante. Comparez la ligne
   `KV cache pool` des logs et testez une vraie requête longue ;
@@ -204,22 +205,24 @@ vide ou absente laisse NCCL à son comportement par défaut validé
 
 ## Ordre de bataille recommandé
 
-1. `256k-mtp` — test froid à 240k, puis benchmark court pour confirmer le gain
-   de MTP avec capture ;
-2. `512k-mtp-eager` — paliers froids 300k → 400k → 480k : référence robuste
-   au-delà du bug de replay ;
-3. `512k-mtp-cp` — mêmes paliers avec graphs + CP=2, puis comparaison directe
+1. `256k` — test froid à 240k en configuration de fiabilité ; conserver le JSON
+   et vérifier que l'API reste saine ;
+2. `256k-graphs` puis `256k-mtp` — benchmarks courts uniquement. Aucun long
+   prompt tant qu'une recette mémoire distincte n'a pas été validée ;
+3. `512k-mtp-eager` — reproduction expérimentale avec
+   `--allow-unsafe-profile`, jamais une étape de production automatique ;
+4. `512k-mtp-cp` — mêmes paliers avec graphs + CP=2, puis comparaison directe
    du TTFT et du décode au profil eager ;
-4. `384k-quality` — test froid 360k en KV BF16 et comparaison de qualité/vitesse
+5. `384k-quality` — test froid 360k en KV BF16 et comparaison de qualité/vitesse
    au socle FP8 ;
-5. `128k-mtp-ep1`, puis `128k-mtp-compile` — deux ablations mono-flux contre
+6. `128k-mtp-ep1`, puis `128k-mtp-compile` — deux ablations mono-flux contre
    la référence MTP5 à ~29 tok/s ; ne les combinez que si chacune gagne seule ;
-6. balayage `MTP_NUM_TOKENS` ∈ {2, 3, 4} à c=1 puis c=4 (profils
+7. balayage `MTP_NUM_TOKENS` ∈ {2, 3, 4} à c=1 puis c=4 (profils
    `128k-batch4-mtp3`, `128k-batch2-mtp`) — cible le p99 de 45 s ;
-7. `128k-batch4-8k` — TTFT/drain des rafales de sous-agents sans MTP ;
-8. audit fabric (`ib_write_bw`, `NCCL_DEBUG=INFO`, MTU) ;
-9. knobs niveau 2 un par un, en isolant chaque variable ;
-10. seulement ensuite, ré-audit d'un runtime plus récent.
+8. `128k-batch4-8k` — TTFT/drain des rafales de sous-agents sans MTP ;
+9. audit fabric (`ib_write_bw`, `NCCL_DEBUG=INFO`, MTU) ;
+10. knobs niveau 2 un par un, en isolant chaque variable ;
+11. seulement ensuite, ré-audit d'un runtime plus récent.
 
 Ne combinez jamais deux changements dans une même mesure : sans isolement,
 une régression est indetectable et un gain est inattribuable.

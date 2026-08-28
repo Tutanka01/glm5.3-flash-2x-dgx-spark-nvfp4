@@ -66,10 +66,10 @@ WAIT_TIMEOUT="${START_WAIT_TIMEOUT:-3600}"
 WAIT_INTERVAL="${START_WAIT_INTERVAL:-15}"
 START_TIME="$(date +%s)"
 NEXT_PROGRESS=0
-glm53_info "Waiting up to ${WAIT_TIMEOUT}s for http://127.0.0.1:${API_PORT}/v1/models"
+glm53_info "Waiting up to ${WAIT_TIMEOUT}s for model and tokenizer readiness"
 
-api_reports_expected_model() {
-  local response
+api_reports_ready() {
+  local response tokenizer_response
   response="$(GLM53_CURL_MAX_TIME=30 glm53_api_curl \
     "http://127.0.0.1:${API_PORT}/v1/models" 2>/dev/null)" || return 1
   python3 -c '
@@ -78,7 +78,19 @@ payload = json.load(sys.stdin)
 expected = sys.argv[1]
 ids = [item.get("id") for item in payload.get("data", [])]
 raise SystemExit(0 if expected in ids else 1)
-' "$SERVED_MODEL_NAME" <<< "$response" >/dev/null 2>&1
+' "$SERVED_MODEL_NAME" <<< "$response" >/dev/null 2>&1 || return 1
+
+  tokenizer_response="$(GLM53_CURL_MAX_TIME=30 glm53_api_curl \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$SERVED_MODEL_NAME\",\"prompt\":\"readiness probe\"}" \
+    "http://127.0.0.1:${API_PORT}/v1/tokenize" 2>/dev/null)" || return 1
+  python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+valid = isinstance(payload.get("count"), int) or isinstance(payload.get("num_tokens"), int)
+valid = valid or isinstance(payload.get("tokens"), list) or isinstance(payload.get("input_ids"), list)
+raise SystemExit(0 if valid else 1)
+' <<< "$tokenizer_response" >/dev/null 2>&1
 }
 
 while :; do
@@ -95,7 +107,7 @@ while :; do
     glm53_die "Worker container exited before readiness"
   fi
 
-  if api_reports_expected_model; then
+  if api_reports_ready; then
     break
   fi
 

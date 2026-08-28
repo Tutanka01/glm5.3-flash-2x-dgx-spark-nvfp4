@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
@@ -38,6 +41,183 @@ class TokenizerProbeError(BenchmarkError):
 
 
 RETRYABLE_HTTP_CODES = frozenset((408, 425, 429, 500, 502, 503, 504))
+LONG_CONTEXT_THRESHOLD = 131072
+LONG_CONTEXT_MAX_PREFILL_CHUNK = 2048
+LONG_CONTEXT_MAX_STATIC_FRACTION = 0.88
+
+
+def is_loopback_url(url: str) -> bool:
+    hostname = urllib.parse.urlparse(url).hostname
+    if hostname is None:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def urlopen(request: urllib.request.Request, timeout: int):  # type: ignore[no-untyped-def]
+    """Open local APIs directly even when the shell exports an HTTP proxy."""
+
+    if is_loopback_url(request.full_url):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            request, timeout=timeout
+        )
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def inspect_local_runtime(base_url: str) -> tuple[dict[str, str] | None, str]:
+    """Read the effective environment of the local head container, if any."""
+
+    if not is_loopback_url(base_url):
+        return None, "the benchmark API is not loopback"
+    project = os.environ.get("GLM53_PROJECT_NAME", "glm53")
+    try:
+        probe = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--filter",
+                "label=com.docker.compose.service=sglang-glm53",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"docker inspection failed: {exc}"
+    container_ids = probe.stdout.split()
+    if not container_ids:
+        return None, "no running local glm53 head container was found"
+    try:
+        inspected = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{json .Config.Env}}",
+                container_ids[0],
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        values = json.loads(inspected.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        return None, f"docker environment inspection failed: {exc}"
+    if inspected.returncode != 0 or not isinstance(values, list):
+        detail = inspected.stderr.strip() or "invalid docker inspect response"
+        return None, detail
+    runtime: dict[str, str] = {}
+    for item in values:
+        if isinstance(item, str) and "=" in item:
+            key, value = item.split("=", 1)
+            runtime[key] = value
+    return runtime, f"container={container_ids[0]}"
+
+
+def long_context_safety_issues(
+    runtime: dict[str, str], target_tokens: int
+) -> list[str]:
+    """Return fail-closed issues for cold prompts above the proven 128k tier."""
+
+    if target_tokens <= LONG_CONTEXT_THRESHOLD:
+        return []
+    issues: list[str] = []
+
+    def integer(name: str) -> int | None:
+        try:
+            return int(runtime[name])
+        except (KeyError, ValueError):
+            issues.append(f"{name} is unknown")
+            return None
+
+    max_model_len = integer("MAX_MODEL_LEN")
+    max_num_seqs = integer("MAX_NUM_SEQS")
+    max_prefill = integer("MAX_NUM_BATCHED_TOKENS")
+    disable_graphs = integer("DISABLE_CUDA_GRAPH")
+    mtp_tokens = integer("MTP_NUM_TOKENS")
+    try:
+        static_fraction = float(runtime["MEM_FRACTION_STATIC"])
+    except (KeyError, ValueError):
+        static_fraction = None
+        issues.append("MEM_FRACTION_STATIC is unknown")
+
+    # Leave room for the chat template and the requested completion.
+    if max_model_len is not None and target_tokens + 512 > max_model_len:
+        issues.append(
+            f"MAX_MODEL_LEN={max_model_len} leaves less than 512 tokens of request headroom"
+        )
+    if max_num_seqs is not None and max_num_seqs != 1:
+        issues.append(f"MAX_NUM_SEQS={max_num_seqs}, expected 1")
+    if max_prefill is not None and max_prefill > LONG_CONTEXT_MAX_PREFILL_CHUNK:
+        issues.append(
+            f"MAX_NUM_BATCHED_TOKENS={max_prefill}, safe ceiling is "
+            f"{LONG_CONTEXT_MAX_PREFILL_CHUNK}"
+        )
+    if disable_graphs is not None and disable_graphs != 1:
+        issues.append("CUDA graphs are enabled")
+    if mtp_tokens is not None and mtp_tokens != 0:
+        issues.append(f"MTP_NUM_TOKENS={mtp_tokens}, expected 0")
+    if (
+        static_fraction is not None
+        and static_fraction > LONG_CONTEXT_MAX_STATIC_FRACTION + 1e-9
+    ):
+        issues.append(
+            f"MEM_FRACTION_STATIC={static_fraction:g}, safe ceiling is "
+            f"{LONG_CONTEXT_MAX_STATIC_FRACTION:g}"
+        )
+    return issues
+
+
+def enforce_long_context_safety(
+    base_url: str, target_tokens: int, allow_unsafe_profile: bool
+) -> None:
+    if target_tokens <= LONG_CONTEXT_THRESHOLD:
+        return
+    runtime, runtime_detail = inspect_local_runtime(base_url)
+    if runtime is None:
+        if allow_unsafe_profile:
+            print(
+                f"WARNING: long-context profile could not be verified ({runtime_detail})",
+                file=sys.stderr,
+            )
+            return
+        raise BenchmarkError(
+            "refusing a cold prompt above 128k because the effective server profile "
+            f"could not be verified ({runtime_detail}). Run this client on the head "
+            "node, or pass --allow-unsafe-profile only for an intentionally "
+            "unprotected experiment."
+        )
+    issues = long_context_safety_issues(runtime, target_tokens)
+    profile = runtime.get("GLM53_PROFILE_NAME", "unknown")
+    if issues and not allow_unsafe_profile:
+        raise BenchmarkError(
+            f"refusing {target_tokens:,} cold tokens with running profile={profile}: "
+            + "; ".join(issues)
+            + ". The reliability profile is '256k': stop both ranks, run "
+            "./start-glm53.sh 256k, then retry."
+        )
+    if issues:
+        print(
+            f"WARNING: bypassing long-context safety checks for profile={profile}: "
+            + "; ".join(issues),
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "Long-context preflight passed: "
+            f"profile={profile}, context={runtime.get('MAX_MODEL_LEN')}, "
+            f"prefill_chunk={runtime.get('MAX_NUM_BATCHED_TOKENS')}, "
+            f"static={runtime.get('MEM_FRACTION_STATIC')}, eager, MTP=off"
+        )
 
 
 def refuse_live_startup_guard() -> None:
@@ -93,7 +273,7 @@ def request_json(
         headers["Authorization"] = f"Bearer {api_key}"
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout) as response:
         result = json.load(response)
     if not isinstance(result, dict):
         raise BenchmarkError(f"{url} returned a non-object JSON response")
@@ -165,6 +345,7 @@ def model_api_status(
     model: str | None,
     api_key: str | None,
     timeout: int,
+    required_context: int | None = None,
 ) -> tuple[bool, str]:
     headers: dict[str, str] = {}
     if api_key:
@@ -172,7 +353,7 @@ def model_api_status(
     url = f"{base_url.rstrip('/')}/models"
     request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
         return False, describe_http_error(exc)
@@ -183,6 +364,22 @@ def model_api_status(
     ids = [item.get("id") for item in payload["data"] if isinstance(item, dict)]
     if model is not None and model not in ids:
         return False, f"HTTP 200, but served model ids are {ids}"
+    if model is not None and required_context is not None:
+        metadata = next(
+            (
+                item
+                for item in payload["data"]
+                if isinstance(item, dict) and item.get("id") == model
+            ),
+            None,
+        )
+        actual_context = metadata.get("max_model_len") if metadata else None
+        if isinstance(actual_context, int) and actual_context < required_context:
+            return (
+                False,
+                f"model context is {actual_context}, but this request needs at least "
+                f"{required_context}",
+            )
     return True, f"HTTP 200, served model ids are {ids}"
 
 
@@ -291,7 +488,7 @@ def flush_cache(base_url: str, api_key: str | None, timeout: int) -> str:
             request = urllib.request.Request(
                 url, data=b"{}", headers=headers, method="POST"
             )
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=timeout) as response:
                 response.read()
             return url
         except (OSError, urllib.error.URLError) as exc:
@@ -329,7 +526,7 @@ def stream_chat(
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     usage: dict[str, Any] = {}
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout) as response:
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -396,6 +593,11 @@ def main() -> int:
         help="seconds to retry transient tokenizer/API failures before aborting",
     )
     parser.add_argument("--cold", action="store_true", help="flush SGLang radix cache first")
+    parser.add_argument(
+        "--allow-unsafe-profile",
+        action="store_true",
+        help="bypass the fail-closed profile check above 128k (may crash the engine)",
+    )
     parser.add_argument("--label", default="long-context")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -408,6 +610,9 @@ def main() -> int:
 
     api_key = os.environ.get(args.api_key_env)
     refuse_live_startup_guard()
+    enforce_long_context_safety(
+        args.base_url, args.target_tokens, args.allow_unsafe_profile
+    )
     tokenizer_url, make_tokenizer_payload = wait_for_tokenizer(
         args.base_url,
         args.model,
@@ -415,6 +620,15 @@ def main() -> int:
         min(args.timeout, 30),
         args.readiness_timeout,
     )
+    model_ready, model_status = model_api_status(
+        args.base_url,
+        args.model,
+        api_key,
+        min(args.timeout, 30),
+        required_context=args.target_tokens + 512,
+    )
+    if not model_ready:
+        raise BenchmarkError(f"server context preflight failed: {model_status}")
 
     def tokenize(text: str) -> int:
         response = request_json(

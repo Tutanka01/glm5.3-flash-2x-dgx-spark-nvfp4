@@ -48,7 +48,9 @@ PY
 
 (
   cd "$TEST_TMP"
-  "$ROOT_DIR/bench-long-context.py" \
+  HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+  http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
+  NO_PROXY= no_proxy= "$ROOT_DIR/bench-long-context.py" \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --model glm-5.3-flash-nvfp4 \
     --target-tokens 1024 \

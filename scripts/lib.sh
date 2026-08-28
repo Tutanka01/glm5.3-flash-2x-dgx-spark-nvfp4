@@ -210,7 +210,9 @@ glm53_sync_worker() {
 
 glm53_api_curl() {
   local -a curl_args
-  curl_args=(-fsS --connect-timeout 5 --max-time "${GLM53_CURL_MAX_TIME:-30}")
+  # Every recipe API target is local or on the private cluster fabric. Never
+  # let an inherited HTTP(S)_PROXY route it through Squid.
+  curl_args=(-fsS --noproxy '*' --connect-timeout 5 --max-time "${GLM53_CURL_MAX_TIME:-30}")
   if [ -n "${API_KEY:-}" ]; then
     curl_args+=(-H "Authorization: Bearer $API_KEY")
   fi
