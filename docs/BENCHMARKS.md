@@ -19,7 +19,14 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-28 | `128k-dflash2` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 37,2 tok/s | — | DFlash2 C1 : ×2,6 vs sans spéculation, +29 % vs MTP5, TTFT intact ; concurrence et acceptation non encore mesurées | `glm53-benchmark-20260828-084231.json` |
 | 2026-08-28 | `128k-dflash2` | `--runs 3 --concurrency 4` | 9/9 | 31,14 s | 83,79 s | 37,3 tok/s | 35,8 tok/s (132,6 s) | files sérielles : `MAX_NUM_SEQS=1`, pas une mesure batched ; décode par flux préservé, ~26 s d'attente par requête en file | `glm53-benchmark-20260828-090034.json` |
 | 2026-08-28 | `128k-dflash2-c4` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 35,4 tok/s | — | C1 sur profil batché : −5 % vs profil mono, TTFT intact | `glm53-benchmark-20260828-092417.json` |
-| 2026-08-28 | `128k-dflash2-c4` | `--runs 3 --concurrency 4` | 9/9 | 0,71 s | 1,02 s | 18,0 tok/s | 67,2 tok/s (70,3 s) | meilleur agrégé mesuré : +61 % vs MTP5 batché, ×2,1 vs sans spéculation ; wall 70 s vs 145 s | `glm53-benchmark-20260828-092536.json` |
+| 2026-08-28 | `128k-dflash2-c4` | `--runs 3 --concurrency 4` | 9/9 | 0,71 s | 1,02 s | 18,0 tok/s | 67,2 tok/s (70,3 s) | +61 % vs MTP5 batché, ×2,1 vs sans spéculation ; wall 70 s vs 145 s ; dépassé ensuite par le balayage c8 (86,0 à C6) | `glm53-benchmark-20260828-092536.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 37,2 tok/s | — | boot validé à statique 0,90 (0,92 : guard trip) ; C1 identique au profil mono | `glm53-benchmark-20260828-103119.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 2` | 9/9 | 0,53 s | 0,58 s | 26,3 tok/s | 50,5 tok/s (94,1 s) | palier intermédiaire du balayage | `glm53-benchmark-20260828-103254.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 4` | 9/9 | 0,72 s | 0,87 s | 20,0 tok/s | 64,9 tok/s (72,2 s) | cohérent avec le profil c4 ; p99 +13 % vs 0,77 s sans spéculation | `glm53-benchmark-20260828-103408.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 5` | 9/9 | 0,81 s | 0,86 s | 18,0 tok/s | 79,1 tok/s (60,2 s) | dépasse déjà le sommet C5 du port vLLM cité (56,2 tok/s) | `glm53-benchmark-20260828-103510.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 6` | 9/9 | 0,75 s | 0,82 s | 17,6 tok/s | 86,0 tok/s (55,6 s) | meilleur agrégé du cluster : ×2,06 vs MTP5 batché, ×2,7 vs sans spéculation ; pas de régression C6, wall ÷2,6 | `glm53-benchmark-20260828-103607.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 7` | 9/9 | 1,01 s | 1,02 s | 17,1 tok/s | 78,0 tok/s (60,9 s) | début de régression : agrégé −9 % vs C6, TTFT médian +34 % | `glm53-benchmark-20260828-104719.json` |
+| 2026-08-28 | `128k-dflash2-c8` | `--runs 3 --concurrency 8` | 9/9 | 0,85 s | 1,21 s | 15,9 tok/s | 79,6 tok/s (60,0 s) | léger rebond d'agrégé mais p99 le plus haut du balayage ; sommet confirmé à C6 | `glm53-benchmark-20260828-104821.json` |
 
 ## Lecture des mesures du 2026-08-28
 
@@ -47,14 +54,40 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
   de la référence sans spéculation (0,77 → 1,02 s), au-delà du garde strict de
   10 % bien qu'excellent en absolu, et le gain C1 du profil batché est de +22 %
   (35,4 tok/s) contre +29 % sur le profil mono.
+- **Balayage c8 à statique 0,90 : sommet à C6, 86,0 tok/s agrégés.** Le profil
+  a booté après dérivation et a enchaîné C1→C8 sans incident : agrégé 50,5
+  (C2) → 64,9 (C4) → 79,1 (C5) → **86,0 (C6, wall 55,6 s)**, puis régression
+  78,0 (C7) et 79,6 (C8) avec un p99 qui franchit 1 s. Même forme de courbe
+  que le port vLLM (sommet puis déclin), décalée d'un cran : C6 au lieu de C5,
+  et un sommet +53 %. Le point d'exploitation recommandé est donc C6 ; au-delà,
+  seule la latence se dégrade, pas la stabilité. À C6, TTFT médian 0,75 s et
+  p99 0,82 s, soit +7 % vs la référence sans spéculation — dans le garde de
+  10 % du protocole ; à C4 le p99 est à +13 %, juste au-dessus. Contre MTP5
+  batché, l'agrégé est ×2,06 et le p99 TTFT ÷55.
 - **Rapprochement avec le port vLLM cité** : 46,9 tok/s C1 chaud sur code pur
   contre 37,2 ici sur le mix standard (sanity/coding/reasoning, température 0).
   Cohérent : le mix contient du raisonnement et de la prose, moins acceptés que
   le code.
-- **Non mesuré à ce stade** : taux d'acceptation par classe, égalité des sorties
-  déterministes, balayage C1–C6 sur `128k-dflash2-c8`, stabilité longue et marge
-  mémoire. La promotion hors `experimental` attend ces points (protocole dans
-  [DFLASH2.md](DFLASH2.md)).
+- **Portes qualité : une franchie, deux partielles.** (1) *Acceptation* : les
+  logs de décode à C6 affichent `accept len` 4,38–5,06 pour 8 tokens draftés
+  (taux 0,48–0,58) — au-dessus du seuil mix ≥ 35 %, médiane ~0,5 autour du
+  seuil code ≥ 50 %. (2) *Égalité des sorties température 0* (hash vs la
+  référence sans spéculation du 27/08) : `coding` 3/3 **identique** octet pour
+  octet ; `sanity` et `reasoning` diffèrent. Le profil est compatible avec des
+  quasi-égalités de logits tranchées différemment entre images (kernels FA4 de
+  l'image dérivée vs image de base), pas avec un échec de vérification — la
+  classe code, cible principale de DFlash2, est la plus longue et tombe
+  exactement juste. À confirmer par une comparaison élargie avant promotion.
+  (3) *Marge mémoire* : `MemAvailable` head mesuré à 7,3 GiB pendant un bench
+  C6 — au-dessus du plancher du garde (6 GiB) mais sous le critère de
+  promotion (8 GiB) ; marge worker non relevée. Un statique 0,88 rendrait
+  ~9,7 GiB si le c8 devenait un profil de production, au prix du pool KV.
+  Le « pire prefill » réel (prefills concurrents longs) reste à mesurer.
+- **Non mesuré à ce stade** : élucidation de l'écart de hash
+  sanity/reasoning (numérique inter-images vs défaut de vérification), marge
+  mémoire ≥ 8 GiB (7,3 GiB mesurés à C6 sur le head), acceptation par classe
+  stricte et stabilité longue. La promotion hors `experimental` attend ces
+  points (protocole dans [DFLASH2.md](DFLASH2.md)).
 - **Première tentative `128k-dflash2-c8` : arrêt au démarrage à 09:43, cause
   identifiée.** Ce n'est ni un bug DFlash2 ni un crash CUDA : le garde mémoire
   de démarrage du head a coupé le conteneur lui-même (`GUARD TRIP`,

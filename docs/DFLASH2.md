@@ -92,6 +92,9 @@ contient les logs des deux rangs, leur état Docker, la mémoire, le GPU et les
 3. **Chercher le bon niveau de concurrence.** Le port TP2 atteint son débit
    agrégé maximal à C5 (56,2 tok/s) puis régresse à C6. DFlash2 cible surtout la
    latence mono-flux ; sans drafter peut rester meilleur pour du débit batché.
+   Mesuré ici le 28 août (`128k-dflash2-c8`) : même forme de courbe, sommet à
+   **C6 = 86,0 tok/s agrégés** (p99 0,82 s), puis régression à C7/C8 (78–80
+   tok/s, p99 > 1 s). Point d'exploitation recommandé : C6.
 4. **Garder une réserve mémoire réelle.** Un premier pool KV plus agressif a
    été tué à C3 pendant trois prefills concurrents de 20K. Le profil publié
    sacrifie environ 118K tokens de pool pour survivre. Sur GB10, la mémoire
