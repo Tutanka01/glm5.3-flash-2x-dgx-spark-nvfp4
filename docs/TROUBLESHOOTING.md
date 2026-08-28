@@ -129,11 +129,13 @@ conteneur de 120 Gio et 128 Gio de mémoire CPU/GPU unifiée, cette signature es
 compatible avec une mise à mort par pression mémoire/cgroup ; le log applicatif
 seul ne permet pas de distinguer le cgroup d'un OOM killer hôte.
 
-La correction n'est pas de relancer le même profil. Utilisez `256k`, qui retire
-les graphes et MTP, passe le chunk 4096 → 1024 et la fraction statique 0,90 →
-0,88. `bench-long-context.py` inspecte le profil effectif et refuse désormais
-automatiquement `256k-mtp` au-dessus de 128K. Un override explicite existe pour
-le diagnostic, mais il rétablit volontairement le risque de crash.
+Pour la voie capacité, utilisez `256k`, qui retire les graphes et MTP, fixe le
+chunk à exactement 2048 et passe la fraction statique de 0,90 à 0,88. Le seuil
+2048 respecte le `index_topk=2048` de GLM ; le port DFlash2/vLLM a observé un
+segfault de warmup avec un budget inférieur. `bench-long-context.py` inspecte
+le profil effectif et demande désormais `--allow-unsafe-profile` pour tester
+`256k-mtp` au-dessus de 128K. Cet override rétablit volontairement le risque de
+crash et l'inscrit dans le résultat JSON.
 
 ## `Permission denied` dans `/cache/huggingface`
 

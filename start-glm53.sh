@@ -5,9 +5,41 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
 
-PROFILE="${1:-}"
+PROFILE=""
 STARTED=0
 READY=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./start-glm53.sh [profile]
+
+All profiles start directly. Legacy --allow-candidate and
+--allow-unsafe-profile options are accepted but no longer required.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --allow-candidate)
+      : # Backward-compatible no-op: admission is no longer blocked.
+      ;;
+    --allow-unsafe-profile)
+      : # Backward-compatible no-op: admission is no longer blocked.
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -* )
+      glm53_die "Unknown start option: $1"
+      ;;
+    *)
+      [ -z "$PROFILE" ] || glm53_die "Only one profile may be selected"
+      PROFILE="$1"
+      ;;
+  esac
+  shift
+done
 
 cleanup_failed_start() {
   local status=$?
@@ -28,6 +60,22 @@ trap cleanup_failed_start EXIT
 
 "$ROOT_DIR/scripts/validate-env.sh" "$PROFILE"
 glm53_load_config "$PROFILE"
+
+case "$PROFILE_TIER" in
+  validated) ;;
+  experimental)
+    glm53_warn "Starting experimental profile '$GLM53_PROFILE_RESOLVED'; preserve both-rank logs if it fails"
+    ;;
+  capacity-candidate)
+    glm53_warn "Starting unproven capacity candidate '$GLM53_PROFILE_RESOLVED'"
+    ;;
+  quarantined)
+    glm53_warn "Starting quarantined profile '$GLM53_PROFILE_RESOLVED'; this lane has prior or expected crash risk"
+    ;;
+  *)
+    glm53_die "Unknown PROFILE_TIER=$PROFILE_TIER"
+    ;;
+esac
 
 glm53_info "Connecting to worker and synchronizing the selected profile"
 glm53_ssh true

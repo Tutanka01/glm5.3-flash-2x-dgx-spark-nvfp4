@@ -18,6 +18,8 @@ RUNNING_MAX_NUM_BATCHED_TOKENS=""
 RUNNING_MEM_FRACTION_STATIC=""
 RUNNING_DISABLE_CUDA_GRAPH=""
 RUNNING_MTP_NUM_TOKENS=""
+RUNNING_PROFILE_TIER=""
+RUNNING_SPECULATIVE_ALGORITHM=""
 if [ -n "$HEAD_CONTAINER_ID" ]; then
   HEAD_CONTAINER_ENV="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
     "$HEAD_CONTAINER_ID" 2>/dev/null || true)"
@@ -28,6 +30,8 @@ if [ -n "$HEAD_CONTAINER_ID" ]; then
   RUNNING_MEM_FRACTION_STATIC="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MEM_FRACTION_STATIC=//p' | head -n 1)"
   RUNNING_DISABLE_CUDA_GRAPH="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^DISABLE_CUDA_GRAPH=//p' | head -n 1)"
   RUNNING_MTP_NUM_TOKENS="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^MTP_NUM_TOKENS=//p' | head -n 1)"
+  RUNNING_PROFILE_TIER="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^PROFILE_TIER=//p' | head -n 1)"
+  RUNNING_SPECULATIVE_ALGORITHM="$(printf '%s\n' "$HEAD_CONTAINER_ENV" | sed -n 's/^SPECULATIVE_ALGORITHM=//p' | head -n 1)"
 fi
 
 if [ -n "$RUNNING_PROFILE" ] && [ "$RUNNING_PROFILE" != "unknown" ]; then
@@ -49,6 +53,8 @@ if [ -n "$RUNNING_MAX_MODEL_LEN" ]; then
     "${RUNNING_MAX_NUM_BATCHED_TOKENS:-unknown}" \
     "${RUNNING_MEM_FRACTION_STATIC:-unknown}" \
     "${RUNNING_DISABLE_CUDA_GRAPH:-unknown}" "${RUNNING_MTP_NUM_TOKENS:-unknown}"
+  printf 'Admission tier: %s\n' "${RUNNING_PROFILE_TIER:-unknown}"
+  printf 'Speculation: %s\n' "${RUNNING_SPECULATIVE_ALGORITHM:-unknown}"
 fi
 printf 'Endpoint: http://%s:%s/v1\n' "$API_ADVERTISE_HOST" "$API_PORT"
 
@@ -57,7 +63,7 @@ if [ -n "$RUNNING_MAX_MODEL_LEN" ] && [ "$RUNNING_MAX_MODEL_LEN" -gt 131072 ]; t
   if python3 - \
     "$RUNNING_MAX_NUM_SEQS" "$RUNNING_MAX_NUM_BATCHED_TOKENS" \
     "$RUNNING_MEM_FRACTION_STATIC" "$RUNNING_DISABLE_CUDA_GRAPH" \
-    "$RUNNING_MTP_NUM_TOKENS" <<'PY'
+    "$RUNNING_MTP_NUM_TOKENS" "$RUNNING_SPECULATIVE_ALGORITHM" <<'PY'
 import sys
 
 try:
@@ -68,15 +74,14 @@ try:
 except ValueError:
     raise SystemExit(1)
 raise SystemExit(
-    0 if requests == 1 and chunk <= 2048 and static <= 0.88
-    and graphs_disabled == 1 and mtp == 0 else 1
+    0 if requests == 1 and chunk == 2048 and static <= 0.88
+    and graphs_disabled == 1 and mtp == 0 and sys.argv[6] == "NONE" else 1
 )
 PY
   then
     printf 'Cold >128k preflight: PASS (reliability configuration)\n'
   else
-    printf 'Cold >128k preflight: REFUSED (use profile 256k for a 240k capacity test)\n' >&2
-    STATUS_RESULT=1
+    printf 'Cold >128k preflight: EXPERIMENTAL (run bench-long-context.py with --allow-unsafe-profile)\n' >&2
   fi
 fi
 

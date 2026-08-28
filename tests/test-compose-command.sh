@@ -18,6 +18,8 @@ run_profile() {
   output_file="$(mktemp /tmp/glm53-command.XXXXXX)"
   unset EP_SIZE ENABLE_TORCH_COMPILE ENABLE_MIXED_CHUNK SCHEDULE_CONSERVATIVENESS
   unset ENABLE_PREFILL_CP ATTN_CP_SIZE CP_STRATEGY
+  unset PROFILE_TIER PROFILE_RUNTIME_IMAGE SPECULATIVE_ALGORITHM
+  unset DFLASH_DRAFT_MODEL_PATH DFLASH_DRAFT_ATTENTION_BACKEND
   set -a
   # shellcheck disable=SC1090
   source "$ROOT_DIR/profiles/$profile.env"
@@ -35,6 +37,14 @@ run_profile() {
   ENABLE_PREFILL_CP="${ENABLE_PREFILL_CP:-0}"; export ENABLE_PREFILL_CP
   ATTN_CP_SIZE="${ATTN_CP_SIZE:-1}"; export ATTN_CP_SIZE
   CP_STRATEGY="${CP_STRATEGY:-interleave}"; export CP_STRATEGY
+  if [ -z "${SPECULATIVE_ALGORITHM:-}" ]; then
+    if [ "$MTP_NUM_TOKENS" -gt 0 ]; then
+      SPECULATIVE_ALGORITHM=NEXTN
+    else
+      SPECULATIVE_ALGORITHM=NONE
+    fi
+  fi
+  export SPECULATIVE_ALGORITHM
   PATH="$ROOT_DIR/tests/mock-bin:$PATH" \
   MODEL_SNAPSHOT_CONTAINER=/cache/huggingface/hub/models--test/snapshots/f4aa \
   SERVED_MODEL_NAME=glm-5.3-flash-nvfp4 \
@@ -64,12 +74,20 @@ run_profile() {
   else
     ! grep -Fx -- '--disable-cuda-graph' "$output_file" >/dev/null
   fi
-  if [ "$MTP_NUM_TOKENS" -gt 0 ]; then
+  if [ "$SPECULATIVE_ALGORITHM" = "NEXTN" ]; then
     grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
     grep -Fx -- 'NEXTN' "$output_file" >/dev/null
     grep -Fx -- '--speculative-num-steps' "$output_file" >/dev/null
     grep -Fx -- "$MTP_NUM_TOKENS" "$output_file" >/dev/null
     grep -Fx -- '--speculative-num-draft-tokens' "$output_file" >/dev/null
+  elif [ "$SPECULATIVE_ALGORITHM" = "DFLASH" ]; then
+    grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
+    grep -Fx -- 'DFLASH' "$output_file" >/dev/null
+    grep -Fx -- '--speculative-draft-model-path' "$output_file" >/dev/null
+    grep -Fx -- "$DFLASH_DRAFT_MODEL_PATH" "$output_file" >/dev/null
+    grep -Fx -- '--speculative-draft-attention-backend' "$output_file" >/dev/null
+    grep -Fx -- "$DFLASH_DRAFT_ATTENTION_BACKEND" "$output_file" >/dev/null
+    ! grep -Fx -- '--speculative-num-steps' "$output_file" >/dev/null
   else
     ! grep -Fx -- '--speculative-algorithm' "$output_file" >/dev/null
   fi
@@ -98,7 +116,7 @@ run_profile() {
   rm -f "$output_file"
 }
 
-for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 256k 256k-graphs 256k-mtp 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
+for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 128k-dflash2 128k-dflash2-c8 128k-dflash2-flashinfer 256k 256k-graphs 256k-mtp 256k-dflash2-eager 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
   run_profile "$profile"
 done
 

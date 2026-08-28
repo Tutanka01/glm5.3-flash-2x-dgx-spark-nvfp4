@@ -84,6 +84,11 @@ ENABLE_PREFILL_CP="${ENABLE_PREFILL_CP:-0}"
 ATTN_CP_SIZE="${ATTN_CP_SIZE:-1}"
 CP_STRATEGY="${CP_STRATEGY:-interleave}"
 
+case "$PROFILE_TIER" in
+  validated|experimental|capacity-candidate|quarantined) ;;
+  *) glm53_die "PROFILE_TIER must be validated, experimental, capacity-candidate or quarantined" ;;
+esac
+
 if [ "${SGLANG_ENABLE_SPEC_V2+x}" = "x" ]; then
   glm53_warn "SGLANG_ENABLE_SPEC_V2 is obsolete in the pinned runtime and is ignored; remove it from .env.glm53"
 fi
@@ -95,6 +100,31 @@ for integer_name in \
   integer_value="${!integer_name:-}"
   case "$integer_value" in ''|*[!0-9]*) glm53_die "$integer_name must be a non-negative integer" ;; esac
 done
+
+case "$SPECULATIVE_ALGORITHM" in
+  NONE)
+    [ "$MTP_NUM_TOKENS" = "0" ] || \
+      glm53_die "SPECULATIVE_ALGORITHM=NONE requires MTP_NUM_TOKENS=0"
+    ;;
+  NEXTN)
+    [ "$MTP_NUM_TOKENS" -gt 0 ] || \
+      glm53_die "SPECULATIVE_ALGORITHM=NEXTN requires MTP_NUM_TOKENS>0"
+    ;;
+  DFLASH)
+    [ "$MTP_NUM_TOKENS" = "0" ] || \
+      glm53_die "DFLASH is a separate drafter; keep MTP_NUM_TOKENS=0"
+    [ -n "$PROFILE_RUNTIME_IMAGE" ] || \
+      glm53_die "DFLASH requires a dedicated PROFILE_RUNTIME_IMAGE"
+    [ -n "$DFLASH_DRAFT_MODEL_PATH" ] || \
+      glm53_die "DFLASH_DRAFT_MODEL_PATH is required"
+    case "$DFLASH_DRAFT_ATTENTION_BACKEND" in
+      fa4|flashinfer) ;;
+      *) glm53_die "DFLASH_DRAFT_ATTENTION_BACKEND must be fa4 or flashinfer in this recipe" ;;
+    esac
+    ;;
+  *) glm53_die "SPECULATIVE_ALGORITHM must be NONE, NEXTN or DFLASH" ;;
+esac
+
 [ "$MAX_MODEL_LEN" -ge 4096 ] || glm53_die "MAX_MODEL_LEN must be at least 4096"
 [ "$MAX_MODEL_LEN" -le 1048576 ] || glm53_die "MAX_MODEL_LEN exceeds the checkpoint limit"
 [ "$MAX_NUM_SEQS" -ge 1 ] || glm53_die "MAX_NUM_SEQS must be at least 1"
@@ -108,6 +138,19 @@ done
 [ "$TORCH_COMPILE_MAX_BS" -ge 1 ] || glm53_die "TORCH_COMPILE_MAX_BS must be at least 1"
 [ "$HF_DOWNLOAD_WORKERS" -ge 1 ] && [ "$HF_DOWNLOAD_WORKERS" -le 16 ] || \
   glm53_die "HF_DOWNLOAD_WORKERS must be between 1 and 16"
+
+if [ "$PROFILE_TIER" = "capacity-candidate" ]; then
+  [ "$MAX_MODEL_LEN" -gt 131072 ] || \
+    glm53_die "A capacity-candidate profile must target more than 128k"
+  [ "$MAX_NUM_SEQS" = "1" ] || \
+    glm53_die "A long-context capacity candidate requires MAX_NUM_SEQS=1"
+  [ "$MAX_NUM_BATCHED_TOKENS" = "2048" ] || \
+    glm53_die "A long-context capacity candidate requires MAX_NUM_BATCHED_TOKENS=2048 (GLM index_topk floor and memory-safe ceiling)"
+  [ "$DISABLE_CUDA_GRAPH" = "1" ] || \
+    glm53_die "A long-context capacity candidate requires CUDA graphs disabled"
+  [ "$MTP_NUM_TOKENS" = "0" ] || \
+    glm53_die "A long-context capacity candidate requires MTP disabled"
+fi
 
 case "$DISABLE_CUDA_GRAPH" in 0|1) ;; *) glm53_die "DISABLE_CUDA_GRAPH must be 0 or 1" ;; esac
 case "$MOE_BACKEND" in
@@ -199,16 +242,18 @@ NODE_RANK=0 HEADLESS= glm53_compose config --quiet
 
 glm53_info "Configuration is valid"
 printf '  profile: %s\n' "$GLM53_PROFILE_RESOLVED"
+printf '  admission tier: %s\n' "$PROFILE_TIER"
 printf '  engine: SGLang (patched SM121 runtime)\n'
 printf '  model: %s@%s\n' "$MODEL_ID" "$MODEL_REVISION"
-printf '  image: %s\n' "$GLM53_RUNTIME_IMAGE"
+printf '  image: %s\n' "$RUNTIME_IMAGE_EFFECTIVE"
 printf '  head/worker fabric: %s / %s\n' "$HEAD_FABRIC_IP" "$WORKER_FABRIC_IP"
 printf '  advertised API: http://%s:%s/v1 (bind=%s)\n' \
   "$API_ADVERTISE_HOST" "$API_PORT" "$API_HOST"
 printf '  context/requests/prefill: %s / %s / %s\n' \
   "$MAX_MODEL_LEN" "$MAX_NUM_SEQS" "$MAX_NUM_BATCHED_TOKENS"
 printf '  MoE/DSA/KV: %s / %s / %s\n' "$MOE_BACKEND" "$DSA_DECODE_BACKEND" "$KV_CACHE_DTYPE"
-printf '  graphs-disabled/MTP: %s / %s\n' "$DISABLE_CUDA_GRAPH" "$MTP_NUM_TOKENS"
+printf '  graphs-disabled/speculation/MTP: %s / %s / %s\n' \
+  "$DISABLE_CUDA_GRAPH" "$SPECULATIVE_ALGORITHM" "$MTP_NUM_TOKENS"
 printf '  TP/EP: 2/%s, conservativeness=%s\n' "$EP_SIZE" "$SCHEDULE_CONSERVATIVENESS"
 printf '  experiments: torch-compile=%s mixed-chunk=%s prefill-cp=%s/%s/%s\n' \
   "$ENABLE_TORCH_COMPILE" "$ENABLE_MIXED_CHUNK" \

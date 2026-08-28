@@ -1,0 +1,45 @@
+{
+  "audited_at": "2026-08-28",
+  "status": "experimental_sglang_profiles_available",
+  "external_reference": {
+    "repository": "https://github.com/tonyd2wild/GLM-5.3-Flash-NVFP4-DFlash2-2x-DGX-Spark",
+    "revision": "9642d4f6628bb66e5fd03afe8e1c31bb2922c6c3",
+    "engine": "vllm",
+    "portable_to_current_sglang_image": false
+  },
+  "draft_model": {
+    "id": "incoai/GLM-5.3-Flash-DFlash2",
+    "revision": "7d74cdd881ed7e32c31175984a67823127b66cfe",
+    "parameters": "1B",
+    "dtype": "bfloat16",
+    "block_size": 8,
+    "draft_tokens": 7,
+    "license": "CC-BY-NC-ND-4.0",
+    "weight_file": "model.safetensors",
+    "weight_size": 2342169800,
+    "weight_sha256": "8931dc522be0aa31760a7463f8d2f8044fa3e6d40be2e87aa08e9fd17bfd6683"
+  },
+  "sglang_support": {
+    "pull_request": "https://github.com/sgl-project/sglang/pull/36708",
+    "pull_request_head_revision": "2d4b6acea720f5eb5a2b2c269f1cc9dcbc8b10c0",
+    "merge_commit_revision": "c4d5d45e506dcd978a65661a503eda1a272c39a4",
+    "merged_into": "xinyuan/glm-5.3-flash-support",
+    "merged_into_main": false,
+    "stacked_on_open_pull_request": 36507,
+    "current_runtime_source_revision": "dfb1bb7e45c20058d37df7a39cceda45a9d216a8",
+    "current_runtime_has_required_glm_capture": false,
+    "candidate_image_tag": "glm53-sglang-dflash2:2d4b6ac-sm121",
+    "candidate_build": "dflash2/sglang/Dockerfile",
+    "candidate_build_sha256": "e281b5e3a5152d693fcd4a740865466850766df9034cbb82a3766c06072ce9ba",
+    "glm_capture_adapter_sha256": "dd1461bace51a922550a82b5f6db9f44caae5a9fd89fa535f99464fc40820208",
+    "candidate_strategy": "install pinned PR source, reapply six accepted SM121 files, then apply the exact GLM mHC capture adapter"
+  },
+  "promotion_requirements": [
+    "immutable SGLang image digest with GLM DFlash capture and SM121 kernels",
+    "draft snapshot pinned and verified on both nodes",
+    "greedy output hashes equal to the target-only lane",
+    "warm acceptance and throughput measured by prompt class",
+    "cold 128k capacity and concurrency sweep without guard or kernel failures",
+    "commercial licensing resolved before non-evaluation use"
+  ]
+}

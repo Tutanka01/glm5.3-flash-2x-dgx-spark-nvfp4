@@ -42,7 +42,7 @@ class TokenizerProbeError(BenchmarkError):
 
 RETRYABLE_HTTP_CODES = frozenset((408, 425, 429, 500, 502, 503, 504))
 LONG_CONTEXT_THRESHOLD = 131072
-LONG_CONTEXT_MAX_PREFILL_CHUNK = 2048
+LONG_CONTEXT_PREFILL_CHUNK = 2048
 LONG_CONTEXT_MAX_STATIC_FRACTION = 0.88
 
 
@@ -144,6 +144,9 @@ def long_context_safety_issues(
     max_prefill = integer("MAX_NUM_BATCHED_TOKENS")
     disable_graphs = integer("DISABLE_CUDA_GRAPH")
     mtp_tokens = integer("MTP_NUM_TOKENS")
+    speculative_algorithm = runtime.get("SPECULATIVE_ALGORITHM")
+    if speculative_algorithm is None:
+        issues.append("SPECULATIVE_ALGORITHM is unknown")
     try:
         static_fraction = float(runtime["MEM_FRACTION_STATIC"])
     except (KeyError, ValueError):
@@ -157,15 +160,19 @@ def long_context_safety_issues(
         )
     if max_num_seqs is not None and max_num_seqs != 1:
         issues.append(f"MAX_NUM_SEQS={max_num_seqs}, expected 1")
-    if max_prefill is not None and max_prefill > LONG_CONTEXT_MAX_PREFILL_CHUNK:
+    if max_prefill is not None and max_prefill != LONG_CONTEXT_PREFILL_CHUNK:
         issues.append(
-            f"MAX_NUM_BATCHED_TOKENS={max_prefill}, safe ceiling is "
-            f"{LONG_CONTEXT_MAX_PREFILL_CHUNK}"
+            f"MAX_NUM_BATCHED_TOKENS={max_prefill}, expected exactly "
+            f"{LONG_CONTEXT_PREFILL_CHUNK} (GLM index_topk floor)"
         )
     if disable_graphs is not None and disable_graphs != 1:
         issues.append("CUDA graphs are enabled")
     if mtp_tokens is not None and mtp_tokens != 0:
         issues.append(f"MTP_NUM_TOKENS={mtp_tokens}, expected 0")
+    if speculative_algorithm not in (None, "NONE"):
+        issues.append(
+            f"SPECULATIVE_ALGORITHM={speculative_algorithm}, expected NONE"
+        )
     if (
         static_fraction is not None
         and static_fraction > LONG_CONTEXT_MAX_STATIC_FRACTION + 1e-9

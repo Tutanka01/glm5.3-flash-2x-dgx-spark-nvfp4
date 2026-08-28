@@ -212,10 +212,14 @@ else
   fail "/dev/infiniband is missing"
 fi
 
-if docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1; then
-  pass "pinned SGLang image is local"
+if docker image inspect "$RUNTIME_IMAGE_EFFECTIVE" >/dev/null 2>&1; then
+  pass "selected SGLang image is local"
 else
-  warn "pinned SGLang image is not local yet (prepare will pull it)"
+  if [ "$SPECULATIVE_ALGORITHM" = "DFLASH" ]; then
+    fail "DFlash2 image is not local; run ./prepare-dflash2.sh first"
+  else
+    warn "pinned SGLang image is not local yet (prepare will pull it)"
+  fi
 fi
 
 if [ "$ERRORS" -gt 0 ]; then

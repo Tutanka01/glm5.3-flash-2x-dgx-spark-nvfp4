@@ -212,8 +212,9 @@ mesures actuelles sont :
 | sous-agents et requêtes simultanées | `128k-batch4` | bon TTFT et 31,5 tok/s agrégés mesurés |
 | un flux interactif prioritaire | `128k-batch4-mtp` | environ 29 tok/s en mono-flux |
 | diagnostic CUDA Graphs | `32k-eager` | retire uniquement les graphes |
-| contexte réel proche de 256K | `256k` | profil de capacité prudent : eager, sans MTP, préfill 1024, statique 0,88 |
-| contexte supérieur à 256K | `512k-mtp-eager` puis `512k-mtp-cp` | expériences, pas profils de production validés |
+| contexte réel proche de 256K | `256k` | candidat de capacité : eager, sans MTP, préfill 2048, statique 0,88 ; preuve froide encore requise |
+| contexte supérieur à 256K | aucun | profils 384/512K en quarantaine, non fiables sur TP2/GB10 |
+| décode mono-flux de prochaine génération | `128k-dflash2` | image expérimentale SGLang prête à construire ; FA4 + repli FlashInfer |
 
 MTP accélère fortement un seul décode, mais dégrade le TTFT lors de rafales
 concurrentes. Pour plusieurs sous-agents, préférez donc `128k-batch4` sans MTP.
@@ -245,9 +246,26 @@ serveur à 256K ne prouve pas que 240K tokens réels fonctionnent.
 
 `--label` nomme uniquement le fichier de résultat : il ne sélectionne jamais le
 profil serveur. Au-dessus de 128K, le client inspecte donc le conteneur réellement
-lancé et refuse par défaut les graphes CUDA, MTP, les chunks supérieurs à 2048,
-plus d'une requête ou `MEM_FRACTION_STATIC>0.88`. Le contournement
+lancé et exige par défaut les graphes CUDA désactivés, MTP coupé, un chunk
+exactement égal à 2048, une seule requête et
+`MEM_FRACTION_STATIC<=0.88`. Le contournement
 `--allow-unsafe-profile` est réservé aux reproductions de crash assumées.
+
+Les profils portent également un niveau de preuve affiché au démarrage. Rien
+n'est bloqué : `capacity-candidate`, `experimental` et `quarantined` démarrent
+directement, avec un avertissement clair. Le client de long contexte conserve
+`--allow-unsafe-profile` afin qu'un test destructif reste explicite dans le
+fichier JSON et dans l'historique shell.
+
+Si un rang tombe, ne redémarrez pas tout de suite :
+
+```bash
+./collect-glm53-report.sh --profile 256k-mtp
+```
+
+Cette commande fabrique une archive dans `results/diagnostics/` avec les logs
+des deux rangs, l'état Docker, la mémoire disponible et les traces OOM du
+kernel. Elle exclut volontairement l'environnement Docker et `API_KEY`.
 
 ### Checklist avant exposition en production
 
@@ -346,12 +364,16 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | ablation TP/EP expérimentale |
 | `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation MTP + EP=1 expérimentale |
 | `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation torch.compile expérimentale |
-| `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | capacité 240K prudente : chunk 1024, statique 0,88 |
-| `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | capture bs=1 validée, préfill froid non validé |
+| `128k-dflash2` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | SGLang PR #36708, draft FA4, image locale à construire |
+| `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 et balayage C1/C2/C4/C5/C6, statique 0,84 |
+| `128k-dflash2-flashinfer` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | repli si FA4 échoue sur SM121 |
+| `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | candidat 240K : chunk 2048, statique 0,88 ; démarrage direct avec avertissement |
+| `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | quarantaine ; capture bs=1 seule validée |
 | `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine : décode court seulement, froid >128K refusé |
-| `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | témoin KV BF16 + CP=2, expérimental |
-| `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | évite le replay graph >256K, à valider |
-| `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | préfill CP=2 expérimental, à valider |
+| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid 240K, statique 0,84 |
+| `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; aucune capacité froide prouvée |
+| `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | quarantaine ; retirer les graphes ne suffit pas à prouver 512K |
+| `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; CP=2 non validé sur ce runtime |
 
 Les noms de profils sont des abréviations : `128k` correspond à `MAX_MODEL_LEN=131072`, soit 131 072 tokens (128 × 1024).
 
@@ -381,7 +403,9 @@ Les profils `128k-batch4` et `128k-batch8` combinent 131 072 tokens de contexte 
 
 Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.md)) : il double le débit de décode mono-flux (14,5 → 29,0 tok/s) mais dégrade fortement le TTFT en batché (p99 45 s à concurrence 4) car l'admission des nouveaux prefills attend les frontières de batch. En pratique : `128k-batch4-mtp` pour l'usage interactif mono-flux, `128k-batch4` sans MTP pour les rafales de sous-agents. Les profils `128k-batch4-mtp3` (3 étapes) et `128k-batch2-mtp` (concurrence 2) explorent le point d'équilibre entre ces deux régimes.
 
-Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Le run froid `256k-mtp` du 27 août s'est figé vers 164K tokens traités, puis le scheduler a reçu `SIGKILL` ; ce profil est donc mis en quarantaine pour les longs prompts. Le profil `256k` retire MTP et les graphes, réduit le chunk de préfill à 1024 et la fraction statique à 0,88. Cette prudence reste également importante car [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit un crash au premier token de décode au-delà de 262 144 tokens lorsque les graphes sont actifs. Les profils 384K/512K restent des reproductions explicitement non sûres et requièrent `--allow-unsafe-profile` tant qu'ils n'ont pas une recette mémoire séparée validée.
+Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Le run froid `256k-mtp` du 27 août s'est figé vers 164K tokens traités, puis le scheduler a reçu `SIGKILL` ; ce profil est donc mis en quarantaine. Le candidat `256k` retire MTP et les graphes, fixe le chunk de préfill à 2048 et la fraction statique à 0,88. Le seuil 2048 est volontaire : le port vLLM/DFlash2 indépendant rapporte des segfaults de warmup en dessous du `index_topk=2048` de GLM. [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit en plus un crash au premier token de décode après de longs prefills lorsque les graphes sont actifs. Les profils 384K/512K restent explicitement non sûrs et requièrent `--allow-unsafe-profile`.
+
+DFlash2 peut faire progresser le décode bien au-delà de MTP sur code et sorties structurées, mais il ne répare pas la capacité longue. Le runtime de base ne contient pas le hook GLM requis ; `prepare-dflash2.sh` construit donc une image dérivée depuis la tête officielle SGLang #36708, réapplique les six correctifs SM121, puis télécharge le drafter épinglé sur les deux nœuds. Les commandes et le repli FlashInfer sont dans [docs/DFLASH2.md](docs/DFLASH2.md).
 
 Pour dépasser les ~29 tok/s mono-flux sans changer les poids ni la politique d'échantillonnage, `128k-mtp-ep1` isole un autre motif de communication MoE et `128k-mtp-compile` isole la compilation bs=1. Ils doivent être comparés séparément au profil MTP5 de référence ; une combinaison n'est justifiée que si chaque ablation gagne seule.
 
@@ -430,6 +454,7 @@ Le benchmark court ne valide pas la capacité long-contexte. Pour construire un 
 
 ```bash
 ./bench-long-context.py \
+  --allow-unsafe-profile \
   --target-tokens 480000 \
   --cold \
   --label 512k-mtp-cp
@@ -481,6 +506,8 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 
 - [audit du checkpoint](docs/AUDIT.md) ;
 - [optimisation : vitesse, concurrence et contexte](docs/OPTIMIZATION.md) ;
+- [audit et trajectoire DFlash2](docs/DFLASH2.md) ;
+- [runbook expérimental 256K/384K/512K/MTP/CUDA graphs/DFlash2](docs/EXPERIMENT-RUNBOOK.md) ;
 - [configuration et diagnostic RoCE](docs/NETWORK.md) ;
 - [historique des benchmarks](docs/BENCHMARKS.md) ;
 - [guide de dépannage](docs/TROUBLESHOOTING.md) ;

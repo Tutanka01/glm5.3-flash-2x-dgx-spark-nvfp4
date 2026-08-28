@@ -12,6 +12,7 @@ import statistics
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
@@ -70,6 +71,17 @@ class Result:
     content_chars: int
 
 
+def urlopen(request: urllib.request.Request, timeout: int):  # type: ignore[no-untyped-def]
+    """Keep loopback benchmark traffic out of inherited HTTP proxies."""
+
+    host = urllib.parse.urlparse(request.full_url).hostname
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            request, timeout=timeout
+        )
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def load_prompts(path: Path | None) -> list[dict[str, Any]]:
     if path is None:
         return DEFAULT_PROMPTS
@@ -119,7 +131,7 @@ def stream_once(
     content_parts: list[str] = []
     usage: dict[str, Any] = {}
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=timeout) as response:
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line.startswith("data:"):
@@ -224,6 +236,12 @@ def main() -> int:
     parser.add_argument("--prompts", type=Path)
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument(
+        "--warmup-runs",
+        type=int,
+        default=1,
+        help="discarded single-stream warmups per target (important for JIT speculative kernels)",
+    )
+    parser.add_argument(
         "--concurrency",
         type=int,
         default=1,
@@ -235,6 +253,8 @@ def main() -> int:
 
     if args.runs < 1 or args.runs > 20:
         parser.error("--runs must be between 1 and 20")
+    if args.warmup_runs < 0 or args.warmup_runs > 5:
+        parser.error("--warmup-runs must be between 0 and 5")
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
     prompts = load_prompts(args.prompts)
@@ -249,8 +269,32 @@ def main() -> int:
     )
 
     results: list[Result] = []
+    warmup_results: list[Result] = []
     wall_seconds: dict[str, float] = {}
     for target_name, base_url, model, api_key in targets:
+        for warmup_number in range(1, args.warmup_runs + 1):
+            prompt = prompts[(warmup_number - 1) % len(prompts)]
+            print(
+                f"[{target_name}] warmup {warmup_number}/{args.warmup_runs} "
+                f"({prompt['name']}; discarded)",
+                flush=True,
+            )
+            warmup = stream_once(
+                target_name=target_name,
+                base_url=base_url,
+                model=model,
+                api_key=api_key,
+                prompt=prompt,
+                run_number=0,
+                timeout=args.timeout,
+            )
+            warmup_results.append(warmup)
+            if not warmup.ok:
+                print(
+                    f"[{target_name}] warmup failed: {warmup.error}",
+                    file=sys.stderr,
+                )
+                return 1
         tasks = [
             (prompt, run_number)
             for prompt in prompts
@@ -342,10 +386,12 @@ def main() -> int:
     artifact = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "concurrency": args.concurrency,
+        "warmup_runs": args.warmup_runs,
         "targets": [
             {"name": name, "base_url": url, "model": model} for name, url, model, _ in targets
         ],
         "results": [asdict(result) for result in results],
+        "warmups_discarded": [asdict(result) for result in warmup_results],
     }
     output.write_text(json.dumps(artifact, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Wrote {output}")

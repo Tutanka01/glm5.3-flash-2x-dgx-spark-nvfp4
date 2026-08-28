@@ -6,4 +6,4 @@ __pycache__/
 .pytest_cache/
 results/*.json
 results/*.jsonl
-
+results/diagnostics/

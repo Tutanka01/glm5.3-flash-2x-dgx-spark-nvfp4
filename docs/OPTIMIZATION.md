@@ -46,12 +46,15 @@ Ces profils ne nécessitent aucune modification du compose ou du `.env` :
 | `128k-batch4-8k` | drain des prefills longs | `MAX_NUM_BATCHED_TOKENS=8192` divise par deux les rounds de préfill ; surveiller le garde mémoire |
 | `128k-mtp-ep1` | décode mono, motif de communication | combine MTP5/graphs avec EP=1 pour mesurer all-reduce TP contre all-to-all EP=2 |
 | `128k-mtp-compile` | décode mono compilé | combine MTP5/graphs avec torch.compile borné à bs=1 ; démarrage plus long |
-| `256k` | capacité froide à 240k | profil de fiabilité : eager, sans MTP, chunk 1024 et statique 0,88 |
+| `256k` | capacité froide à 240k | candidat : eager, sans MTP, chunk 2048 et statique 0,88 |
+| `128k-dflash2` | décode spéculatif C1/C4 | image SGLang PR #36708, draft 1B BF16, FA4 et graphes |
+| `128k-dflash2-flashinfer` | repli DFlash2 | même expérience avec attention draft FlashInfer |
+| `256k-dflash2-eager` | DFlash2 + froid 240K | pression maximale, graphes coupés, chunk 2048, statique 0,84 |
 | `256k-graphs` | décode court avec limite 256k | ✅ 14,4 tok/s sur petits prompts ; capture bs=1 validée, capacité froide 256k non testée |
 | `256k-mtp` | décode court uniquement | quarantaine après `SIGKILL` du scheduler pendant le test froid 240k ; le client refuse >128k |
-| `384k-quality` | >256k sans compression KV supplémentaire | KV BF16, MTP, graphs et préfill CP=2 ; cible froide initiale 360k |
-| `512k-mtp-eager` | >256k robuste | MTP 5, graphes désactivés ; contourne le crash amont >262k au prix du décode eager |
-| `512k-mtp-cp` | >256k rapide | MTP + graphs, préfill DSA partagé sur 2 rangs ; cible 480k (~240k/rang) |
+| `384k-quality` | reproduction >256k sans compression KV supplémentaire | quarantaine : KV BF16, MTP, graphs et CP=2, aucune capacité prouvée |
+| `512k-mtp-eager` | reproduction >256k | quarantaine : retire un défaut de replay connu, pas le risque mémoire |
+| `512k-mtp-cp` | reproduction >256k | quarantaine : MTP + graphs + CP=2, non validé sur ce runtime |
 | `128k-ep1` | latence MoE | EP=1 (all-reduce pur) contre EP=2 (all-to-all sur RoCE) : même calcul, seul le motif de communication change |
 
 Notes :
@@ -114,9 +117,9 @@ prompts sont courts, mais avec :
 
 ```bash
 ./start-glm53.sh 512k-mtp-cp
-./bench-long-context.py --target-tokens 300000 --cold --label 512k-mtp-cp-300k
-./bench-long-context.py --target-tokens 400000 --cold --label 512k-mtp-cp-400k
-./bench-long-context.py --target-tokens 480000 --cold --label 512k-mtp-cp-480k
+./bench-long-context.py --allow-unsafe-profile --target-tokens 300000 --cold --label 512k-mtp-cp-300k
+./bench-long-context.py --allow-unsafe-profile --target-tokens 400000 --cold --label 512k-mtp-cp-400k
+./bench-long-context.py --allow-unsafe-profile --target-tokens 480000 --cold --label 512k-mtp-cp-480k
 ```
 
 Le client place trois aiguilles, enregistre le nombre de tokens réellement vu
@@ -206,7 +209,7 @@ vide ou absente laisse NCCL à son comportement par défaut validé
 ## Ordre de bataille recommandé
 
 1. `256k` — test froid à 240k en configuration de fiabilité ; conserver le JSON
-   et vérifier que l'API reste saine ;
+   et vérifier que l'API reste saine (`./start-glm53.sh 256k`) ;
 2. `256k-graphs` puis `256k-mtp` — benchmarks courts uniquement. Aucun long
    prompt tant qu'une recette mémoire distincte n'a pas été validée ;
 3. `512k-mtp-eager` — reproduction expérimentale avec
@@ -223,6 +226,10 @@ vide ou absente laisse NCCL à son comportement par défaut validé
 9. audit fabric (`ib_write_bw`, `NCCL_DEBUG=INFO`, MTU) ;
 10. knobs niveau 2 un par un, en isolant chaque variable ;
 11. seulement ensuite, ré-audit d'un runtime plus récent.
+
+La piste DFlash2 dispose maintenant de trois profils expérimentaux. Préparez
+l'image et le draft avec `./prepare-dflash2.sh`, puis suivez le sas décrit dans
+[DFLASH2.md](DFLASH2.md). Les patches KV du port vLLM ne sont pas copiés.
 
 Ne combinez jamais deux changements dans une même mesure : sans isolement,
 une régression est indetectable et un gain est inattribuable.
