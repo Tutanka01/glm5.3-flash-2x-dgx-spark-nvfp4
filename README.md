@@ -214,7 +214,7 @@ mesures actuelles sont :
 | diagnostic CUDA Graphs | `32k-eager` | retire uniquement les graphes |
 | contexte réel proche de 256K | `256k` | validé à 240 008 tokens froids : eager, sans MTP, préfill 1024, statique 0,88 |
 | contexte supérieur à 256K | aucun | profils 384/512K en quarantaine, non fiables sur TP2/GB10 |
-| décode mono-flux de prochaine génération | `128k-dflash2` | image expérimentale SGLang prête à construire ; FA4 + repli FlashInfer |
+| décode mono-flux de prochaine génération | `128k-dflash2` | mesuré 37,2 tok/s mono (+29 % vs MTP5) ; `experimental` jusqu'à la validation acceptation + concurrence |
 
 MTP accélère fortement un seul décode, mais dégrade le TTFT lors de rafales
 concurrentes. Pour plusieurs sous-agents, préférez donc `128k-batch4` sans MTP.
@@ -364,7 +364,7 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `128k-ep1` | 131 072 | 4 | FlashInfer CUTLASS | oui | non | ablation TP/EP expérimentale |
 | `128k-mtp-ep1` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation MTP + EP=1 expérimentale |
 | `128k-mtp-compile` | 131 072 | 1 | FlashInfer CUTLASS | oui | 5 étapes | ablation torch.compile expérimentale |
-| `128k-dflash2` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | démarrage C1 : Mamba BF16/5 slots, draft FA4 fenêtre 2048 |
+| `128k-dflash2` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | démarrage C1 : Mamba BF16/5 slots, draft FA4 fenêtre 2048 ; 37,2 tok/s mesurés |
 | `128k-dflash2-c4` | 131 072 | 4 | FlashInfer CUTLASS | oui | DFlash2 | concurrence C4 : Mamba BF16/20 slots, statique 0,90 |
 | `128k-dflash2-c8` | 131 072 | 8 | FlashInfer CUTLASS | oui | DFlash2 | stress graphes bs=8 : Mamba BF16/40 slots, statique 0,92 |
 | `128k-dflash2-flashinfer` | 131 072 | 1 | FlashInfer CUTLASS | oui | DFlash2 | repli C1 si FA4 échoue sur SM121 |
@@ -406,7 +406,7 @@ Le MTP est désormais mesuré sur cluster (voir [BENCHMARKS.md](docs/BENCHMARKS.
 
 Le résultat `256k-graphs` à 14,4 tok/s utilise les petits prompts du benchmark standard : il valide le démarrage, la capture bs=1 et le décode court avec une limite configurée à 262 144, mais **pas** un préfill froid de 256k. Le run froid `256k-mtp` du 27 août s'est figé vers 164K tokens traités, puis le scheduler a reçu `SIGKILL` ; ce profil est donc mis en quarantaine. À l'inverse, `256k` a réussi le 28 août avec 240 008 tokens après template, TTFT 204,59 s, préfill 1 173,12 tok/s, récupération 3/3 et API saine. Le profil conserve donc la configuration réellement prouvée : eager, sans MTP, chunk 1024 et statique 0,88. Le seuil vLLM/DFlash2 de 2048 n'est pas généralisé à SGLang. [SGLang #36550](https://github.com/sgl-project/sglang/issues/36550) reproduit en plus un crash au premier token de décode après de longs prefills lorsque les graphes sont actifs. Les profils 384K/512K restent explicitement non sûrs et requièrent `--allow-unsafe-profile`.
 
-DFlash2 peut faire progresser le décode bien au-delà de MTP sur code et sorties structurées, mais il ne répare pas la capacité longue. Le runtime de base ne contient pas le hook GLM requis ; `prepare-dflash2.sh` construit donc une image dérivée depuis la tête officielle SGLang #36708, réapplique les six correctifs SM121, puis télécharge le drafter épinglé sur les deux nœuds. Les commandes et le repli FlashInfer sont dans [docs/DFLASH2.md](docs/DFLASH2.md).
+DFlash2 peut faire progresser le décode bien au-delà de MTP sur code et sorties structurées, mais il ne répare pas la capacité longue. Le runtime de base ne contient pas le hook GLM requis ; `prepare-dflash2.sh` construit donc une image dérivée depuis la tête officielle SGLang #36708, réapplique les six correctifs SM121, puis télécharge le drafter épinglé sur les deux nœuds. Première mesure du 28 août : 37,2 tok/s mono-flux à 128K, soit +29 % vs MTP5 avec un TTFT intact ; la concurrence, l'acceptation par classe et l'égalité des sorties restent à valider avant promotion (voir [BENCHMARKS.md](docs/BENCHMARKS.md)). Les commandes et le repli FlashInfer sont dans [docs/DFLASH2.md](docs/DFLASH2.md).
 
 Pour dépasser les ~29 tok/s mono-flux sans changer les poids ni la politique d'échantillonnage, `128k-mtp-ep1` isole un autre motif de communication MoE et `128k-mtp-compile` isole la compilation bs=1. Ils doivent être comparés séparément au profil MTP5 de référence ; une combinaison n'est justifiée que si chaque ablation gagne seule.
 

@@ -16,6 +16,24 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-27 | `128k-batch4-mtp` | `--runs 3 --concurrency 4` | 9/9 | 7,61 s | 45,3 s | 21,7 tok/s | 41,8 tok/s (114,7 s) | agrégé +33 % mais TTFT dégradé par l'admission retardée sous spéculation | `glm53-benchmark-20260827-140538.json` |
 | 2026-08-27 | `256k-graphs` | `--runs 3` | 9/9 | 0,32 s | 0,37 s | 14,4 tok/s | — | limite serveur 262k + petits prompts : capture bs=1 et décode court validés, **capacité 256k non testée** | `glm53-benchmark-20260827-181201.json` |
 | 2026-08-28 | `256k` | long froid 240 000 | 1/1 | 204,59 s | — | 13,48 tok/s | préfill 1 173,12 tok/s | 240 008 tokens après template, 3/3 aiguilles, API saine ; eager, sans MTP, chunk 1024, statique 0,88 | `glm53-long-context-256k-safe-20260828-073956.json` |
+| 2026-08-28 | `128k-dflash2` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 37,2 tok/s | — | DFlash2 C1 : ×2,6 vs sans spéculation, +29 % vs MTP5, TTFT intact ; concurrence et acceptation non encore mesurées | `glm53-benchmark-20260828-084231.json` |
+
+## Lecture des mesures du 2026-08-28
+
+- **DFlash2 mono-flux : meilleur décode mesuré sur ce cluster.** 37,2 tok/s à
+  128K, soit ×2,6 contre le même bench sans spéculation (14,5) et +29 % contre
+  MTP5 (29,0). Le seuil de promotion « gain C1 ≥ 25 % contre MTP » de
+  [DFLASH2.md](DFLASH2.md) est franchi dès le premier essai.
+- **TTFT intact** : 0,38 s médian, p99 0,42 s. Le draft 1B ne pénalise pas
+  l'admission en mono-flux, au contraire de MTP5 qui coûtait déjà +0,1 s.
+- **Rapprochement avec le port vLLM cité** : 46,9 tok/s C1 chaud sur code pur
+  contre 37,2 ici sur le mix standard (sanity/coding/reasoning, température 0).
+  Cohérent : le mix contient du raisonnement et de la prose, moins acceptés que
+  le code.
+- **Non mesuré à ce stade** : taux d'acceptation par classe, égalité des sorties
+  déterministes, TTFT à concurrence 4 (point faible de MTP : 7,6 s médian) et
+  balayage C1–C6 sur `128k-dflash2-c8`. La promotion hors `experimental` attend
+  ces points (protocole dans [DFLASH2.md](DFLASH2.md)).
 
 ## Lecture des mesures du 2026-08-27
 
