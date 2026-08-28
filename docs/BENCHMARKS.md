@@ -17,6 +17,7 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-27 | `256k-graphs` | `--runs 3` | 9/9 | 0,32 s | 0,37 s | 14,4 tok/s | — | limite serveur 262k + petits prompts : capture bs=1 et décode court validés, **capacité 256k non testée** | `glm53-benchmark-20260827-181201.json` |
 | 2026-08-28 | `256k` | long froid 240 000 | 1/1 | 204,59 s | — | 13,48 tok/s | préfill 1 173,12 tok/s | 240 008 tokens après template, 3/3 aiguilles, API saine ; eager, sans MTP, chunk 1024, statique 0,88 | `glm53-long-context-256k-safe-20260828-073956.json` |
 | 2026-08-28 | `128k-dflash2` | `--runs 3` | 9/9 | 0,38 s | 0,42 s | 37,2 tok/s | — | DFlash2 C1 : ×2,6 vs sans spéculation, +29 % vs MTP5, TTFT intact ; concurrence et acceptation non encore mesurées | `glm53-benchmark-20260828-084231.json` |
+| 2026-08-28 | `128k-dflash2` | `--runs 3 --concurrency 4` | 9/9 | 31,14 s | 83,79 s | 37,3 tok/s | 35,8 tok/s (132,6 s) | files sérielles : `MAX_NUM_SEQS=1`, pas une mesure batched ; décode par flux préservé, ~26 s d'attente par requête en file | `glm53-benchmark-20260828-090034.json` |
 
 ## Lecture des mesures du 2026-08-28
 
@@ -26,14 +27,23 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
   [DFLASH2.md](DFLASH2.md) est franchi dès le premier essai.
 - **TTFT intact** : 0,38 s médian, p99 0,42 s. Le draft 1B ne pénalise pas
   l'admission en mono-flux, au contraire de MTP5 qui coûtait déjà +0,1 s.
+- **Smoke chat + tools validé sur l'image dérivée** : parsing d'appel d'outil
+  correct (`get_temperature`), génération déterministe conforme. Première
+  validation fonctionnelle de la voie DFlash2, pas seulement un gain de débit.
+- **Le run C4 sur `128k-dflash2` n'est pas une mesure batched** :
+  `MAX_NUM_SEQS=1` place les requêtes excédentaires en file, d'où l'escalier de
+  TTFT (médiane 31,1 s, p99 83,8 s, ~26 s d'attente par requête) et un agrégé
+  (35,8 tok/s) quasi égal au mono. Aucun crash ni retract et un décode par flux
+  préservé à 37,3 tok/s : la file se comporte proprement. La mesure de
+  concurrence réelle attend `128k-dflash2-c4` puis le balayage c8.
 - **Rapprochement avec le port vLLM cité** : 46,9 tok/s C1 chaud sur code pur
   contre 37,2 ici sur le mix standard (sanity/coding/reasoning, température 0).
   Cohérent : le mix contient du raisonnement et de la prose, moins acceptés que
   le code.
 - **Non mesuré à ce stade** : taux d'acceptation par classe, égalité des sorties
-  déterministes, TTFT à concurrence 4 (point faible de MTP : 7,6 s médian) et
-  balayage C1–C6 sur `128k-dflash2-c8`. La promotion hors `experimental` attend
-  ces points (protocole dans [DFLASH2.md](DFLASH2.md)).
+  déterministes, comportement batché réel (`128k-dflash2-c4`, balayage C1–C6 sur
+  `128k-dflash2-c8`). La promotion hors `experimental` attend ces points
+  (protocole dans [DFLASH2.md](DFLASH2.md)).
 
 ## Lecture des mesures du 2026-08-27
 
