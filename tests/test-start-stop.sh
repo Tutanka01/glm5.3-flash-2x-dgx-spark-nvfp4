@@ -13,10 +13,10 @@ export START_RUN_DOCTOR=0
 export START_SMOKE=0
 export OOM_GUARD=0
 
-"$ROOT_DIR/start-glm53.sh" 256k > "$TEST_STATE/candidate-start" 2>&1
-grep -F "Starting unproven capacity candidate '256k'" \
-  "$TEST_STATE/candidate-start" >/dev/null
-grep -F 'GLM-5.3-Flash is serving' "$TEST_STATE/candidate-start" >/dev/null
+"$ROOT_DIR/start-glm53.sh" 256k > "$TEST_STATE/validated-256k-start" 2>&1
+! grep -F "Starting unproven capacity candidate '256k'" \
+  "$TEST_STATE/validated-256k-start" >/dev/null
+grep -F 'GLM-5.3-Flash is serving' "$TEST_STATE/validated-256k-start" >/dev/null
 "$ROOT_DIR/stop-glm53.sh" --profile 256k >/dev/null
 
 "$ROOT_DIR/start-glm53.sh" 512k-mtp-eager > "$TEST_STATE/quarantine-start" 2>&1

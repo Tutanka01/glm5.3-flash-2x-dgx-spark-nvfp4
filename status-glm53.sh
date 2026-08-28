@@ -74,7 +74,7 @@ try:
 except ValueError:
     raise SystemExit(1)
 raise SystemExit(
-    0 if requests == 1 and chunk == 2048 and static <= 0.88
+    0 if requests == 1 and chunk <= 2048 and static <= 0.88
     and graphs_disabled == 1 and mtp == 0 and sys.argv[6] == "NONE" else 1
 )
 PY

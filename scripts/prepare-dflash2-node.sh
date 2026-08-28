@@ -15,14 +15,39 @@ glm53_load_config "$PROFILE"
 
 NODE_CACHE="$HF_CACHE"
 [ "$ROLE" = "head" ] || NODE_CACHE="$WORKER_HF_CACHE"
-mkdir -p "$NODE_CACHE" "$NODE_CACHE/tmp"
+mkdir -p "$NODE_CACHE"
+
+DRAFT_CACHE_CONTAINER=/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2
+DRAFT_LOCK_CONTAINER=/cache/huggingface/hub/.locks/models--incoai--GLM-5.3-Flash-DFlash2
+DRAFT_TMP_CONTAINER=/cache/huggingface/tmp/glm53-dflash2
+
+docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1 || \
+  glm53_die "Base SGLang image is missing; run ./prepare-glm53.sh first"
+
+# A prior root container or interrupted Hub operation can leave only this model
+# cache unwritable. Repair the three DFlash-specific paths from a root container
+# so the actual download can still run unprivileged. Do not chown the shared Hub
+# cache or any other checkpoint.
+glm53_info "Ensuring the DFlash2 cache paths are writable on $ROLE"
+docker run --rm --pull never \
+  -v "$NODE_CACHE:/cache/huggingface" \
+  --entrypoint sh "$GLM53_RUNTIME_IMAGE" \
+  -c 'set -eu
+      owner="$1:$2"
+      shift 2
+      for path do
+        mkdir -p "$path"
+        chown -R "$owner" "$path"
+        chmod -R u+rwX "$path"
+      done' sh "$(id -u)" "$(id -g)" \
+  "$DRAFT_CACHE_CONTAINER" "$DRAFT_LOCK_CONTAINER" "$DRAFT_TMP_CONTAINER"
 
 DOCKER_ARGS=(
   run --rm --pull never --network host
   --user "$(id -u):$(id -g)"
   -e HOME=/tmp/glm53-dflash-user
   -e HF_HOME=/cache/huggingface
-  -e TMPDIR=/cache/huggingface/tmp
+  -e "TMPDIR=$DRAFT_TMP_CONTAINER"
   -e "HF_HUB_OFFLINE=$([ "$MODE" = local ] && printf 1 || printf 0)"
   -e "HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET:-1}"
   -e "HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-1800}"
@@ -41,6 +66,4 @@ PYTHON_ARGS=(
 )
 [ "$MODE" = download ] || PYTHON_ARGS+=(--local-only)
 
-docker image inspect "$GLM53_RUNTIME_IMAGE" >/dev/null 2>&1 || \
-  glm53_die "Base SGLang image is missing; run ./prepare-glm53.sh first"
 docker "${DOCKER_ARGS[@]}" "$GLM53_RUNTIME_IMAGE" "${PYTHON_ARGS[@]}"

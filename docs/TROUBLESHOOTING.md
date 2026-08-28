@@ -130,12 +130,12 @@ compatible avec une mise à mort par pression mémoire/cgroup ; le log applicati
 seul ne permet pas de distinguer le cgroup d'un OOM killer hôte.
 
 Pour la voie capacité, utilisez `256k`, qui retire les graphes et MTP, fixe le
-chunk à exactement 2048 et passe la fraction statique de 0,90 à 0,88. Le seuil
-2048 respecte le `index_topk=2048` de GLM ; le port DFlash2/vLLM a observé un
-segfault de warmup avec un budget inférieur. `bench-long-context.py` inspecte
-le profil effectif et demande désormais `--allow-unsafe-profile` pour tester
-`256k-mtp` au-dessus de 128K. Cet override rétablit volontairement le risque de
-crash et l'inscrit dans le résultat JSON.
+chunk à 1024 et passe la fraction statique de 0,90 à 0,88. Cette configuration
+a réussi un froid de 240 008 tokens le 28 août avec récupération 3/3 et API
+saine. Le segfault sous 2048 observé dans le port DFlash2/vLLM n'est donc pas
+transposable au chemin SGLang de base. `bench-long-context.py` inspecte le
+profil effectif et demande `--allow-unsafe-profile` pour tester `256k-mtp`
+au-dessus de 128K ; l'override inscrit la prise de risque dans le résultat JSON.
 
 ## `Permission denied` dans `/cache/huggingface`
 
@@ -148,6 +148,13 @@ sudo chown -R "$(id -u):$(id -g)" \
 ```
 
 Un dossier de verrous absent est sans gravité. Ne supprimez pas le cache : les blobs déjà présents sont réutilisables.
+
+Pour le drafter DFlash2, `prepare-dflash2.sh` répare désormais automatiquement
+le propriétaire de trois chemins seulement sur chaque nœud : le dossier
+`models--incoai--GLM-5.3-Flash-DFlash2`, son dossier `.locks` et son temporaire
+`tmp/glm53-dflash2`. Le reste du cache n'est ni modifié ni supprimé. Après un
+ancien échec `Permission denied`, relancez simplement la même préparation ; les
+couches de l'image et les fichiers déjà téléchargés seront réutilisés.
 
 ## Proxy GHCR sur le worker
 

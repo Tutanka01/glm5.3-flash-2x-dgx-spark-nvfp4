@@ -97,10 +97,11 @@ contient les logs des deux rangs, leur état Docker, la mémoire, le GPU et les
    sacrifie environ 118K tokens de pool pour survivre. Sur GB10, la mémoire
    unifiée disponible et les allocations transitoires comptent plus que la
    capacité KV nominale.
-5. **Ne pas descendre le chunk sous 2048.** GLM-5.3 a `index_topk=2048`; le port
-   vLLM rapporte des segfaults de warmup avec un budget batché inférieur. Pour
-   notre candidat 256K, 2048 est donc à la fois le plancher fonctionnel observé
-   et le plafond mémoire retenu.
+5. **Ne pas généraliser le chunk entre moteurs.** Le port vLLM/DFlash2 rapporte
+   des segfaults de warmup sous `index_topk=2048`, donc nos profils DFlash2
+   expérimentaux restent à 2048. En revanche, SGLang sans DFlash2 a réellement
+   réussi 240 008 tokens avec chunk 1024 ; le profil `256k` conserve cette
+   valeur prouvée.
 6. **Contrôler l'acceptation, pas seulement la vitesse.** Une mauvaise
    contraction mHC peut fonctionner tout en chutant vers 15 % d'acceptation.
    La promotion exige l'acceptation par classe de prompt et l'égalité des
@@ -123,9 +124,12 @@ est attendu :
 Après `prepare-dflash2.sh`, contrôlez l'image construite et le snapshot :
 
 ```bash
+set -a
+source .env.glm53
+set +a
 ./scripts/check-dflash2-runtime.sh \
   --image 'glm53-sglang-dflash2:2d4b6ac-sm121' \
-  --draft-dir '/cache/huggingface/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe'
+  --draft-dir "$HF_CACHE/hub/models--incoai--GLM-5.3-Flash-DFlash2/snapshots/7d74cdd881ed7e32c31175984a67823127b66cfe"
 ```
 
 Le sas vérifie dans le code de l'image : l'algorithme DFLASH générique, le hook

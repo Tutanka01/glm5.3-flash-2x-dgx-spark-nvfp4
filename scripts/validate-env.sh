@@ -144,8 +144,8 @@ if [ "$PROFILE_TIER" = "capacity-candidate" ]; then
     glm53_die "A capacity-candidate profile must target more than 128k"
   [ "$MAX_NUM_SEQS" = "1" ] || \
     glm53_die "A long-context capacity candidate requires MAX_NUM_SEQS=1"
-  [ "$MAX_NUM_BATCHED_TOKENS" = "2048" ] || \
-    glm53_die "A long-context capacity candidate requires MAX_NUM_BATCHED_TOKENS=2048 (GLM index_topk floor and memory-safe ceiling)"
+  [ "$MAX_NUM_BATCHED_TOKENS" -le 2048 ] || \
+    glm53_die "A long-context capacity candidate requires MAX_NUM_BATCHED_TOKENS<=2048"
   [ "$DISABLE_CUDA_GRAPH" = "1" ] || \
     glm53_die "A long-context capacity candidate requires CUDA graphs disabled"
   [ "$MTP_NUM_TOKENS" = "0" ] || \

@@ -46,7 +46,7 @@ Ces profils ne nécessitent aucune modification du compose ou du `.env` :
 | `128k-batch4-8k` | drain des prefills longs | `MAX_NUM_BATCHED_TOKENS=8192` divise par deux les rounds de préfill ; surveiller le garde mémoire |
 | `128k-mtp-ep1` | décode mono, motif de communication | combine MTP5/graphs avec EP=1 pour mesurer all-reduce TP contre all-to-all EP=2 |
 | `128k-mtp-compile` | décode mono compilé | combine MTP5/graphs avec torch.compile borné à bs=1 ; démarrage plus long |
-| `256k` | capacité froide à 240k | candidat : eager, sans MTP, chunk 2048 et statique 0,88 |
+| `256k` | capacité froide à 240k | validé à 240 008 tokens : eager, sans MTP, chunk 1024 et statique 0,88 |
 | `128k-dflash2` | décode spéculatif C1/C4 | image SGLang PR #36708, draft 1B BF16, FA4 et graphes |
 | `128k-dflash2-flashinfer` | repli DFlash2 | même expérience avec attention draft FlashInfer |
 | `256k-dflash2-eager` | DFlash2 + froid 240K | pression maximale, graphes coupés, chunk 2048, statique 0,84 |

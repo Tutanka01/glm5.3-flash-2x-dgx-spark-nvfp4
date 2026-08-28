@@ -15,6 +15,7 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-27 | `128k-batch4-mtp` | `--runs 3` | 9/9 | 0,40 s | 0,53 s | 28,9 tok/s | — | décode identique à 32k-mtp : le long contexte ne pénalise pas le décode | `glm53-benchmark-20260827-140200.json` |
 | 2026-08-27 | `128k-batch4-mtp` | `--runs 3 --concurrency 4` | 9/9 | 7,61 s | 45,3 s | 21,7 tok/s | 41,8 tok/s (114,7 s) | agrégé +33 % mais TTFT dégradé par l'admission retardée sous spéculation | `glm53-benchmark-20260827-140538.json` |
 | 2026-08-27 | `256k-graphs` | `--runs 3` | 9/9 | 0,32 s | 0,37 s | 14,4 tok/s | — | limite serveur 262k + petits prompts : capture bs=1 et décode court validés, **capacité 256k non testée** | `glm53-benchmark-20260827-181201.json` |
+| 2026-08-28 | `256k` | long froid 240 000 | 1/1 | 204,59 s | — | 13,48 tok/s | préfill 1 173,12 tok/s | 240 008 tokens après template, 3/3 aiguilles, API saine ; eager, sans MTP, chunk 1024, statique 0,88 | `glm53-long-context-256k-safe-20260828-073956.json` |
 
 ## Lecture des mesures du 2026-08-27
 
@@ -51,7 +52,7 @@ Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
 | Profil | Cible froide | Graphes | Spéculation | KV | Préfill CP | État |
 |---|---:|---|---|---|---|---|
 | `256k-mtp` | 240 000 | oui | 5 | FP8 | non | **échec** : préfill figé puis scheduler `-9`; quarantaine |
-| `256k` | 240 000 | non | non | FP8 | non | nouvelle recette de fiabilité à mesurer |
+| `256k` | 240 000 | non | non | FP8 | non | **réussi le 2026-08-28** : 240 008 tokens, récupération 3/3, API saine |
 | `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | à mesurer ; pression draft supplémentaire, statique 0,84 |
 | `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
 | `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; évite le bug graph mais reste non sûr côté mémoire |
@@ -80,3 +81,8 @@ rapporte un crash de replay CUDA graph au premier token après un préfill froid
 supérieur à 262 144 tokens. Le context parallelism de préfill à deux rangs a
 fait passer 428k dans le reproducer amont, mais il ne constitue pas une preuve
 sur GB10/FlashInfer tant que la même requête n'a pas réussi ici.
+
+Le succès `256k` tranche aussi la question du chunk sur cette recette : 1024 a
+fonctionné avec SGLang à 240 008 tokens. Le segfault sous 2048 rapporté par le
+port DFlash2 concernait sa voie vLLM patchée ; ce n'est pas un plancher général
+du modèle et il ne doit pas remplacer la preuve obtenue sur le runtime présent.

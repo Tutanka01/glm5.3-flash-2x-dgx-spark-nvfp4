@@ -26,7 +26,7 @@ class LongContextSafetyTests(unittest.TestCase):
         runtime = {
             "MAX_MODEL_LEN": "262144",
             "MAX_NUM_SEQS": "1",
-            "MAX_NUM_BATCHED_TOKENS": "2048",
+            "MAX_NUM_BATCHED_TOKENS": "1024",
             "MEM_FRACTION_STATIC": "0.88",
             "DISABLE_CUDA_GRAPH": "1",
             "MTP_NUM_TOKENS": "0",
@@ -47,20 +47,19 @@ class LongContextSafetyTests(unittest.TestCase):
         issues = BENCH.long_context_safety_issues(runtime, 240000)
         self.assertIn("CUDA graphs are enabled", issues)
         self.assertIn("MTP_NUM_TOKENS=5, expected 0", issues)
-        self.assertTrue(any("expected exactly 2048" in issue for issue in issues))
+        self.assertTrue(any("safe ceiling is 2048" in issue for issue in issues))
 
-    def test_prefill_chunk_below_index_topk_is_refused(self) -> None:
+    def test_prefill_chunk_2048_is_also_within_ceiling(self) -> None:
         runtime = {
             "MAX_MODEL_LEN": "262144",
             "MAX_NUM_SEQS": "1",
-            "MAX_NUM_BATCHED_TOKENS": "1024",
+            "MAX_NUM_BATCHED_TOKENS": "2048",
             "MEM_FRACTION_STATIC": "0.88",
             "DISABLE_CUDA_GRAPH": "1",
             "MTP_NUM_TOKENS": "0",
             "SPECULATIVE_ALGORITHM": "NONE",
         }
-        issues = BENCH.long_context_safety_issues(runtime, 240000)
-        self.assertTrue(any("GLM index_topk floor" in issue for issue in issues))
+        self.assertEqual(BENCH.long_context_safety_issues(runtime, 240000), [])
 
     def test_128k_and_below_does_not_require_special_profile(self) -> None:
         self.assertEqual(BENCH.long_context_safety_issues({}, 120000), [])
