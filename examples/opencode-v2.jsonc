@@ -18,8 +18,11 @@
             "input": ["text"],
             "output": ["text"]
           },
+          // Limites calibrées pour le profil par défaut ./start-glm53.sh 256k-dflash2-eager
+          // (pool KV ≈ 210K tokens, 200 012 tokens froids validés le 2026-08-28).
+          // Autres profils : 245760 pour `256k` (240 008 validés), 32768 pour `32k`.
           "limit": {
-            "context": 32768,
+            "context": 196608,
             "output": 8192
           }
         }

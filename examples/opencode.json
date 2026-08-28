@@ -17,7 +17,7 @@
             "field": "reasoning_content"
           },
           "limit": {
-            "context": 32768,
+            "context": 196608,
             "output": 8192
           }
         }

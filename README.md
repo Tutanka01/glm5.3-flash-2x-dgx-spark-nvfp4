@@ -6,9 +6,11 @@ sur le head synchronise le worker, contrôle les deux machines, charge le modèl
 et expose une API compatible OpenAI.
 
 > **État actuel :** le runtime épinglé produit des réponses cohérentes et les
-> profils 32K/128K ont été mesurés sur deux GB10. Les profils 256K et 512K
-> restent des candidats expérimentaux tant qu'ils n'ont pas passé le benchmark
-> froid long-contexte sur votre cluster. Le checkpoint NVFP4 est communautaire ;
+> profils 32K/128K ont été mesurés sur deux GB10. Le long contexte est validé
+> à froid : 240 008 tokens sans spéculation (`256k`) et 200 012 tokens avec
+> DFlash2 (`256k-dflash2-eager`, décode ×3). Les profils 384K/512K restent des
+> candidats expérimentaux tant qu'ils n'ont pas passé le benchmark froid
+> long-contexte sur votre cluster. Le checkpoint NVFP4 est communautaire ;
 > ne confondez pas validation technique et équivalence qualité avec l'API
 > officielle.
 
@@ -212,7 +214,8 @@ mesures actuelles sont :
 | sous-agents et requêtes simultanées | `128k-dflash2-c8` | 86,0 tok/s agrégés à C6, TTFT p99 0,82 s mesurés ; `128k-dflash2-c4` (67,2 à C4) et `128k-batch4` (31,5) en replis éprouvés |
 | un flux interactif prioritaire | `128k-dflash2` | 37,2 tok/s mesurés, TTFT intact ; `128k-batch4-mtp` (29 tok/s) en repli épinglé |
 | diagnostic CUDA Graphs | `32k-eager` | retire uniquement les graphes |
-| contexte réel proche de 256K | `256k` | validé à 240 008 tokens froids : eager, sans MTP, préfill 1024, statique 0,88 |
+| contexte long au quotidien (défaut) | `256k-dflash2-eager` | 200 012 tokens froids validés, décode 39,6 tok/s ; exige `./prepare-dflash2.sh` une fois ; drafter sous licence CC BY-NC-ND (recherche/évaluation) |
+| contexte maximal (> 200K) | `256k` | validé à 240 008 tokens froids : eager, sans MTP, préfill 1024, statique 0,88 ; décode 13,5 tok/s |
 | contexte supérieur à 256K | aucun | profils 384/512K en quarantaine, non fiables sur TP2/GB10 |
 | décode mono-flux de prochaine génération | `128k-dflash2` | mesuré 37,2 tok/s mono et 86,0 tok/s agrégés à C6 (profil c8) ; `experimental` jusqu'à la validation acceptation + stabilité |
 
@@ -234,10 +237,23 @@ Pour changer de profil, arrêtez toujours les deux rangs avant le redémarrage :
 ```
 
 Avant d'annoncer une capacité de contexte, testez-la avec un vrai prompt froid.
-Pour 240K, utilisez exclusivement le profil de fiabilité `256k` :
+Le défaut long contexte est `256k-dflash2-eager` (200 012 tokens froids validés,
+décode 39,6 tok/s) ; la préparation DFlash2 se fait une fois :
 
 ```bash
-./stop-glm53.sh --profile 256k-mtp  # si c'est le profil actuellement lancé
+./prepare-dflash2.sh 256k-dflash2-eager
+./start-glm53.sh 256k-dflash2-eager
+./status-glm53.sh 256k-dflash2-eager
+./bench-long-context.py --allow-unsafe-profile --target-tokens 200000 --cold \
+  --label 256k-dflash2-200000
+./status-glm53.sh 256k-dflash2-eager
+```
+
+Au-delà de 200K et jusqu'à 240K, utilisez exclusivement le profil de fiabilité
+`256k` (240 008 tokens froids validés, sans spéculation) :
+
+```bash
+./stop-glm53.sh --profile 256k-dflash2-eager  # si c'est le profil actuellement lancé
 ./start-glm53.sh 256k
 ./status-glm53.sh 256k
 ./bench-long-context.py --target-tokens 240000 --cold --label 256k-safe
@@ -375,7 +391,7 @@ réseau confirmées. Conservez les pins actuels du modèle et du runtime.
 | `256k` | 262 144 | 1 | FlashInfer CUTLASS | non | non | 240 008 tokens froids validés : chunk 1024, statique 0,88, récupération 3/3 |
 | `256k-graphs` | 262 144 | 1 | FlashInfer CUTLASS | oui | non | quarantaine ; capture bs=1 seule validée |
 | `256k-mtp` | 262 144 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine : décode court seulement, froid >128K refusé |
-| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | pression maximale : draft 1B + froid long, Mamba BF16/5, statique 0,88 ; 200K froid validé le 2026-08-28 (décode ×3 vs `256k`), plafond pool ≈ 210K tokens |
+| `256k-dflash2-eager` | 262 144 | 1 | FlashInfer CUTLASS | non | DFlash2 | défaut long contexte : draft 1B + froid long, Mamba BF16/5, statique 0,88 ; 200K froid validé le 2026-08-28 (décode ×3 vs `256k`), plafond pool ≈ 210K tokens |
 | `384k-quality` | 393 216 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; aucune capacité froide prouvée |
 | `512k-mtp-eager` | 524 288 | 1 | FlashInfer CUTLASS | non | 5 étapes | quarantaine ; retirer les graphes ne suffit pas à prouver 512K |
 | `512k-mtp-cp` | 524 288 | 1 | FlashInfer CUTLASS | oui | 5 étapes | quarantaine ; CP=2 non validé sur ce runtime |
@@ -422,6 +438,12 @@ Deux configurations prêtes à adapter sont fournies :
 
 - [examples/opencode.json](examples/opencode.json) pour OpenCode stable ;
 - [examples/opencode-v2.jsonc](examples/opencode-v2.jsonc) pour OpenCode v2.
+
+Les limites de contexte des deux exemples (`196608` tokens) sont calibrées pour
+le profil long contexte par défaut `256k-dflash2-eager` (pool KV ≈ 210K tokens,
+200 012 tokens froids validés) et laissent la place à la sortie. Si vous lancez
+un autre profil, ajustez `limit.context` : `245760` pour `256k` (240 008 tokens
+validés), `32768` pour `32k`.
 
 Remplacez `10.10.10.1` par l'IP du head. Sans authentification SGLang, une valeur factice suffit au client :
 
