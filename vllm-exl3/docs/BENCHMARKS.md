@@ -67,8 +67,10 @@ python3 tests/bench_prefix_cache.py --runs 3            # default ~8.4k target �
 ```
 
 | 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine** — 200 005 prompt tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse de 40 tokens, petit échantillon) | capacité : pool 1.75M → 200k ≈ 11 % ; pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid ; vs lane SGLang : prefill 1230 tok/s mais plafond pool ~210k, décode 39.6 tok/s | `results/glm53-long-context-long-context-20260829-122213.json` |
+| 2026-08-29 | `bench_long_context.py --target-tokens 500000 --cold --label 500k-cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages résiduelles des runs précédents toujours dans le pool ; dégradation prefill 200k→500k : −4 % | `results/glm53-long-context-500k-cold-20260829-123606.json` |
+| 2026-08-29 | `bench_long_context.py --target-tokens 900000 --cold --label 900k-cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine — 900 007 tokens validés à froid** | TTFT 1138.4 s, prefill 790.6 tok/s (−9 % vs 200k — dégradation quasi plate, signature sparse-MLA) ; pages 200k+500k encore résidentes (1.6M cumulés dans le pool 1.75M) ; `decode=516638 tok/s` dans l'artefact = artefact de fenêtre (garde minimum ajoutée au bench) | `results/glm53-long-context-900k-cold-20260829-125558.json` |
 
-Still pending on this kit: 500k/900k cold probes toward the 1M claim,
+Still pending on this kit: **990k cold after a lane restart (full 1M-window claim)**,
 prefix-cache v2.2 `coldhit` reading, boot shape-warmup check.
 
 Promotion criteria (inherited from the sibling lane's DFlash2 protocol):

@@ -509,8 +509,16 @@ def stream_chat(
         raise BenchmarkError("stream contained no content, reasoning, or tool delta")
     completion_tokens = usage.get("completion_tokens")
     decode_rate = None
-    if isinstance(completion_tokens, int) and completion_tokens > 1 and finished > first_token_at:
-        decode_rate = (completion_tokens - 1) / (finished - first_token_at)
+    decode_window = finished - first_token_at if finished > first_token_at else 0.0
+    # A sub-100 ms window on a short completion makes (n-1)/window explode
+    # into absurd tok/s (observed 516638 on a 40-token answer) — the SSE tail
+    # can flush in one read. Report None below a minimum measurement window.
+    if (
+        isinstance(completion_tokens, int)
+        and completion_tokens > 1
+        and decode_window >= 0.25
+    ):
+        decode_rate = (completion_tokens - 1) / decode_window
     prompt_tokens = usage.get("prompt_tokens")
     return {
         "content": "".join(content_parts),
