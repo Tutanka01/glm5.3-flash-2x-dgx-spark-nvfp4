@@ -30,6 +30,7 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
 | 2026-08-28 | `256k-dflash2-eager` | long froid 180 000 | 1/1 | 148,27 s | — | 40,47 tok/s | préfill 1 214,06 tok/s | 180 005 tokens après template, 3/3 aiguilles, API saine ; DFlash2 ×3,0 vs `256k` sans spéculation (13,48) ; chunk 2048, statique 0,88, mamba usage 0,80 au pire | `glm53-long-context-256k-dflash2-180000-20260828-134329.json` |
 | 2026-08-28 | `256k-dflash2-eager` | long froid 220 000 | 0/1 | — | — | — | — | échec propre : stream fermé sans aucun token (hash de chaîne vide), API saine après ; confirmé par les logs : **aucun prefill lancé**, refus d'admission — pool ≈ 210K tokens < 220K demandés | `glm53-long-context-256k-dflash2-220000-20260828-134711.json` |
 | 2026-08-28 | `256k-dflash2-eager` | long froid 200 000 | 1/1 | 162,56 s | — | 39,61 tok/s | préfill 1 230,42 tok/s | 200 012 tokens après template, 3/3 aiguilles, API saine ; usage pool ~0,95 — plafond pratique de la lane à statique 0,88 | `glm53-long-context-256k-dflash2-200000-20260828-135605.json` |
+| 2026-08-28 | `512k-mtp-eager` | étude boot (pool annoncé, smoke 64 tokens) | 1/1 | — | — | — | — | boot 744 s (poids 683 s) ; pool annoncé **493 440 tokens** à statique 0,90 — seuil ~490K franchi, marge 13,4K au-dessus du palier 480K ; `available_gpu_mem` 9,62 GB au scheduler, MemAvailable head ~9,5 GiB ; MTP5 régulé adaptativement 5→3 étapes au smoke (`ema_accept_len` 1,55) ; capacité froide **non testée** | — (logs compose) |
 
 ## Lecture des mesures du 2026-08-28
 
@@ -106,6 +107,22 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
   réserve identique au c4 validé) ; repli 0,88 si nouveau trip, après
   `collect-glm53-report.sh`. Les rangs n'ont jamais atteint la readiness :
   aucune conclusion sur DFlash2 en charge.
+- **Étude boot `512k-mtp-eager` : le pool annoncé passe le seuil, de justesse.**
+  Après un boot de 744 s (dont 683 s de chargement des poids), le scheduler
+  annonce `max_total_num_tokens=493440` pour `context_len=524288`
+  (statique 0,90, chunk 4096, graphes OFF, `max_running_requests=1`). La
+  limite pratique mono-requête de ce profil est donc le **pool** (493K), pas
+  le contexte : la capacité 512K complète est exclue à ce statique, et le
+  palier cible 480K ne garde que 13 432 tokens de marge (usage projeté ~0,97,
+  comparable au 200K DFlash2 qui est passé à usage ~0,95). Cohérence mémoire :
+  `available_gpu_mem` 9,62 GB au scheduler et `MemAvailable` head ~9,5 GiB en
+  fin de boot — le garde n'approche pas son plancher. Détail nouveau : MTP5
+  est régulé par un mécanisme adaptatif observé dès le boot (steps 5→3,
+  `draft_tokens` 6→4, `ema_accept_len` 1,55 sur un prompt smoke) ;
+  `MTP_NUM_TOKENS=5` agit comme maximum, pas comme engagement. Deux requêtes
+  smoke de 64 tokens ont répondu 200 OK (API saine). Suite convenue : bench
+  court, puis rampe froide 300K→400K→480K avec `--allow-unsafe-profile` — un
+  succès court-contexte ne prouvera toujours pas la capacité froide.
 
 ## Lecture des mesures du 2026-08-27
 
@@ -145,7 +162,7 @@ Ne cochez une ligne qu'après un prompt **froid** réellement envoyé :
 | `256k` | 240 000 | non | non | FP8 | non | **réussi le 2026-08-28** : 240 008 tokens, récupération 3/3, API saine |
 | `256k-dflash2-eager` | 240 000 | non | DFlash2 1B | FP8 | non | **180 000 et 200 000 réussis le 2026-08-28** (3/3 aiguilles, API saine, décode ~40 tok/s) ; **220 000 refusé à l'admission** (aucun prefill loggé, pool ≈ 210K tokens) — dépasser ~210K exige un statique supérieur, essai explicite `--allow-unsafe-profile` |
 | `384k-quality` | 360 000 | oui | 5 | BF16 | 2 rangs | à mesurer |
-| `512k-mtp-eager` | 480 000 | non | 5 | FP8 | non | à mesurer ; évite le bug graph mais reste non sûr côté mémoire |
+| `512k-mtp-eager` | 480 000 | non | 5 (adaptatif) | FP8 | non | **boot validé le 2026-08-28** : pool annoncé 493 440 tokens à statique 0,90 (marge 13,4K au-dessus du palier 480K, plafond pratique = pool < contexte 524K), marge hôte head ~9,5 GiB, API saine ; capacité froide non testée — rampe 300K→400K→480K |
 | `512k-mtp-cp` | 480 000 | oui | 5 | FP8 | 2 rangs | à mesurer ; expérimental |
 
 Commande canonique :
