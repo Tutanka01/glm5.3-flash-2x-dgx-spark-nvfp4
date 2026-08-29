@@ -56,6 +56,10 @@ RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 _CHARS_PER_TOKEN = 4.5
 # Hybrid MLA page: sparse-MLA prefix hits are block-aligned to this size.
 DEFAULT_PAGE_TOKENS = 3584
+# Unique per invocation: this vLLM build offers no cache-reset endpoint, so
+# colds must not reuse pages cached by a previous bench session (observed
+# 2026-08-29: reruns reused chat content and "cold" TTFT dropped 10.3s -> 1.9s).
+_SESSION_SALT = f"{int(time.time()) % 100000000:08d}"
 
 _DOC_SENTENCE = (
     "The document states that the {keyword} protocol requires operators to "
@@ -110,7 +114,7 @@ def _http_json(url: str, payload: dict | None, api_key: str, timeout: float) -> 
 
 def _build_document(chat_index: int, target_tokens: int) -> str:
     keyword = f"NODE{chat_index}"
-    code = f"CKSUM-{chat_index:02d}-{target_tokens:05d}"
+    code = f"CKSUM-{chat_index:02d}-{_SESSION_SALT}"
     filler_chars = max(256, int(target_tokens * _CHARS_PER_TOKEN))
     sentence = _DOC_SENTENCE.format(keyword=keyword, code=code)
     body = []
@@ -208,6 +212,9 @@ def run_pair(base_url: str, model: str, api_key: str, chat_index: int,
     reset_endpoint = None
     if reset:
         reset_endpoint = reset_prefix_cache(base_url, api_key, timeout)
+        if reset_endpoint is None:
+            print("  (no cache-reset endpoint responded — colds rely on the "
+                  "unique per-session CKSUM salt)")
 
     # Instrument BOTH turns: the cold-turn delta exposes whether the cold
     # prefill genuinely ran (hits ~ 0) or reused pages (hits > 0 despite a

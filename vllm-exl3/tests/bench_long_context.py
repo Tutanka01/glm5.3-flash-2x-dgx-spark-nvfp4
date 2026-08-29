@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -50,6 +51,9 @@ NEEDLES = (
 )
 EXPECTED = "|".join(value for _, value in NEEDLES)
 FILLER = "Neutral archival padding sentence for context capacity verification.\n"
+# Unique per invocation so repeated runs never hit the prefix cache left by
+# a previous session (this vLLM build exposes no cache-reset endpoint).
+_SESSION_ID = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
 class BenchmarkError(RuntimeError):
@@ -367,6 +371,7 @@ def make_context(repeats: int) -> str:
     return "".join(
         (
             "GLM53_LONG_CONTEXT_CAPABILITY_TEST\n"
+            f"SESSION {_SESSION_ID}. "  # unique per invocation: true colds
             "Read the full archival text. Three labelled retrieval codes occur once each.\n",
             FILLER * segments[0],
             f"\n{NEEDLES[0][0]} stores {NEEDLES[0][1]}.\n",
@@ -402,13 +407,22 @@ def calibrate_context(
     return context, actual, repeats
 
 
-def reset_backend_cache(base_url: str, api_key: str | None, timeout: int) -> str:
-    """Reset the server prefix cache, trying every known reset endpoint."""
+def reset_backend_cache(base_url: str, api_key: str | None, timeout: int) -> str | None:
+    """Reset the server prefix cache, trying every known reset endpoint.
+
+    Returns the endpoint that worked, or None when the server offers none.
+    On this glm53-flash vLLM build no reset endpoint exists (404 on every
+    candidate, observed 2026-08-29): --cold then relies on the unique
+    SESSION filler so repeated invocations still measure true cold
+    prefills. A lane restart is the stricter guarantee (fresh boot = empty
+    cache).
+    """
 
     base = base_url.rstrip("/")
     root = base[:-3] if base.endswith("/v1") else base
     candidates = (
         f"{root}/reset_prefix_cache",
+        f"{base}/reset_prefix_cache",
         f"{base}/flush_cache",
         f"{root}/flush_cache",
     )
@@ -431,11 +445,11 @@ def reset_backend_cache(base_url: str, api_key: str | None, timeout: int) -> str
             failures.append(f"{url}: {describe_http_error(exc)}")
         except (OSError, urllib.error.URLError) as exc:
             failures.append(f"{url}: {exc}")
-    raise BenchmarkError(
-        "cold run requested, but every cache-reset endpoint failed "
-        "(vLLM POST /reset_prefix_cache and the /flush_cache fallbacks): "
-        + "; ".join(failures)
+    print(
+        "WARNING: no cache-reset endpoint responded; proceeding without a "
+        "reset. Cold-ness is preserved by the unique SESSION filler."
     )
+    return None
 
 
 def stream_chat(
