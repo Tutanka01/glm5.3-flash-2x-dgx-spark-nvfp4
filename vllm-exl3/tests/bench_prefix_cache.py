@@ -209,10 +209,15 @@ def run_pair(base_url: str, model: str, api_key: str, chat_index: int,
     if reset:
         reset_endpoint = reset_prefix_cache(base_url, api_key, timeout)
 
-    hits_before, queries_before = _metrics_prefix_cache(base_url, api_key, timeout)
     cold = _chat_once(base_url, model, api_key, messages, timeout)
     if not cold.get("ok"):
         return {"chat": chat_index, "cold": cold, "ok": False, "reset": reset_endpoint}
+
+    # Snapshot AFTER the cold turn: the delta must span the warm turn only.
+    # A window covering cold+warm divides total hits by total queries of both
+    # turns and halves the apparent ratio (v1/v2.0 instrumentation bug — the
+    # stack itself was hitting every full page all along).
+    hits_before, queries_before = _metrics_prefix_cache(base_url, api_key, timeout)
 
     assistant_reply = ((cold.get("text_head") or "").strip()) or f"The document requires {code}."
     warm_messages = messages + [

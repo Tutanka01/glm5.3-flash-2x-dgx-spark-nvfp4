@@ -108,6 +108,7 @@ def stream_once(
     prompt: dict[str, Any],
     run_number: int,
     timeout: int,
+    thinking: str = "default",
 ) -> Result:
     payload = {
         "model": model,
@@ -117,6 +118,11 @@ def stream_once(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if thinking in ("on", "off"):
+        # GLM chat templates gate thinking via chat_template_kwargs. Lanes
+        # that default thinking ON burn small max_tokens budgets inside
+        # <think> and can stream no content deltas at all.
+        payload["chat_template_kwargs"] = {"enable_thinking": thinking == "on"}
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
@@ -129,6 +135,7 @@ def stream_once(
     started = time.perf_counter()
     first_token_at: float | None = None
     content_parts: list[str] = []
+    finish_reason: str | None = None
     usage: dict[str, Any] = {}
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -144,6 +151,8 @@ def stream_once(
                     usage = event["usage"]
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
                     piece = delta.get("content") or ""
                     reasoning_piece = delta.get("reasoning_content") or ""
                     tool_piece = delta.get("tool_calls") or []
@@ -187,7 +196,11 @@ def stream_once(
         prompt=prompt["name"],
         run=run_number,
         ok=first_token_at is not None,
-        error=None if first_token_at is not None else "stream contained no content/reasoning/tool delta",
+        error=None if first_token_at is not None else (
+            "stream contained no content/reasoning/tool delta"
+            + (f" (finish_reason={finish_reason})" if finish_reason else "")
+            + " — try --thinking off if the lane defaults thinking on"
+        ),
         ttft_seconds=ttft,
         total_seconds=finished - started,
         prompt_tokens=usage.get("prompt_tokens"),
@@ -248,6 +261,14 @@ def main() -> int:
         help="number of requests kept in flight per target (sub-agent simulation)",
     )
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument(
+        "--thinking",
+        choices=["default", "off", "on"],
+        default="default",
+        help="control enable_thinking via chat_template_kwargs. Use 'off' for "
+             "lanes whose chat template defaults thinking on (GLM vLLM lane), "
+             "otherwise small max_tokens budgets stream no content deltas.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -287,6 +308,7 @@ def main() -> int:
                 prompt=prompt,
                 run_number=0,
                 timeout=args.timeout,
+                thinking=args.thinking,
             )
             warmup_results.append(warmup)
             if not warmup.ok:
@@ -314,6 +336,7 @@ def main() -> int:
                         prompt=prompt,
                         run_number=run_number,
                         timeout=args.timeout,
+                        thinking=args.thinking,
                     )
                 )
         else:
@@ -333,6 +356,7 @@ def main() -> int:
                         prompt=prompt,
                         run_number=run_number,
                         timeout=args.timeout,
+                        thinking=args.thinking,
                     ): (prompt["name"], run_number)
                     for prompt, run_number in tasks
                 }
