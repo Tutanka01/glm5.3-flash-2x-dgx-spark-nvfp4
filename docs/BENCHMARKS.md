@@ -243,6 +243,7 @@ util 0.87 ; ~256k ×3 concurrents tenus en live (29,5 % de KV au pic).
 | 2026-08-29 | `./bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, agrégé **54.8 tok/s**, TTFT médian 1.61 s, **p99 16.7 s** | escalier de TTFT conforme à `GLM53_MIXED_PREFILL_CHUNK=skip` : les nouveaux prefills attendent qu'un décode se vide (coding r2 TTFT 9.54 s ≈ total coding r1 9.50 s). Tradeoff amont connu (schéma issue #19) ; adoucisseur candidat `GLM53_MIXED_PREFILL_CHUNK=256` | `vllm-exl3/results/glm53-benchmark-20260829-115750.json` |
 | 2026-08-29 | `…` (skip, re-mesure après ajout de `wall_seconds` au bench) | 9/9 ok, agrégé **50.0 tok/s** (wall exact 37.1 s), TTFT médian 2.60 s, **p99 14.79 s** | escalier reproduit (TTFT 0.83 → 2.6 → 8.6 → 9.2 → 14.8 : prefills en file derrière les décodes) ; remplace la mesure de 11h57 dont le wall manquait — le fallback `max(total_seconds)` du comparateur surestimait l'agrégé (72.1 tok/s estimés) et avait faussé une première comparaison | `vllm-exl3/results/glm53-benchmark-c4-chunkskip-20260829-173451.json` |
 | 2026-08-29 | `c4-chunk-ab.sh --no-restart` sous `GLM53_MIXED_PREFILL_CHUNK=256` (même protocole C4) | 9/9 ok, agrégé **64.3 tok/s** (wall 30.7 s), TTFT médian 0.85 s, **p99 1.22 s** — verdict **PASS** : p99 ratio 0.083 (≤ 0.75), agrégé ratio 1.288 (≥ 0.95) | p99 TTFT **÷12** (14.8 → 1.2 s) et agrégé **+29 %** vs skip : le plafond mixte 256 élimine l'escalier sans rendre le goodput ; politique scheduler par défaut de la lane → **256** | `vllm-exl3/results/glm53-benchmark-c4-chunk256-20260829-173038.json` |
+| 2026-08-29 | A/B qualité : `bench-glm53.py --prompts tests/ab_quality_prompts.jsonl --runs 1 --thinking on --save-content` (budgets ×6 identiques, temp 0) vs OpenRouter `z-ai/glm-5.3-flash` | **PASS RATE 4/4 = 4/4** (grader exécutable : 2 tâches code contre tests unitaires, 2 tâches JSON structurelles) ; `release_config` **bit-identique** (sha256 égal des deux côtés) | confirmation bout en bout de l'argument KLD (0.0246, EXL3-QUALITY.md) : le 4bpw passe les mêmes tests que la référence. Caveats : le côté référence est OpenRouter **provider Modal** (pas z.ai direct) et son reasoning est obligatoire (400 « Reasoning is mandatory… ») → thinking forcé des deux côtés ; 1 run/tâche. Ne pas citer les tok/s decode de ce run : en thinking le TTFT inclut le raisonnement, métrique non comparable aux rows DFlash2 | `vllm-exl3/results/ab-quality-20260829-233715.json` |
 | 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok, 3/3 aiguilles (sha256 exact), API saine** — 200 005 tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse 40 tokens, petit échantillon) | pool 1.75M → 200k ≈ 11 %. Pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid | `vllm-exl3/results/glm53-long-context-long-context-20260829-122213.json` |
 | 2026-08-29 | `… --target-tokens 500000 --cold --label 500k-cold` | **ok, 3/3 aiguilles, API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages des runs précédents encore résidentes ; −4 % de prefill vs 200k | `vllm-exl3/results/glm53-long-context-500k-cold-20260829-123606.json` |
 | 2026-08-29 | `… --target-tokens 900000 --cold --label 900k-cold` | **ok, 3/3 aiguilles, API saine — 900 007 tokens froids** | TTFT 1138.4 s, prefill 790.6 tok/s ; 1.6M de pages cumulées résidentes dans le pool 1.75M | `vllm-exl3/results/glm53-long-context-900k-cold-20260829-125558.json` |
@@ -285,12 +286,13 @@ les agents en rafales.
   → protocole + journal dans [EXL3-SOAK.md](EXL3-SOAK.md) (sonde quotidienne
   `vllm-exl3/scripts/soak-day.sh`).
 - A/B qualité contre l'API officielle sur tâches de code/agent identiques
-  (l'argument KLD mérite une confirmation bout en bout) ⬜
-  → `./bench-glm53.py --prompts vllm-exl3/tests/ab_quality_prompts.jsonl
-  --runs 1 --thinking off --save-content --compare-*` puis
-  `vllm-exl3/tests/grade_ab_quality.py --artifact <json>` ; les deux scores
-  vont dans la row.
+  (l'argument KLD mérite une confirmation bout en bout) ✅ 2026-08-29
+  → PASS RATE **4/4 (EXL3 4bpw) = 4/4** (référence : OpenRouter
+  `z-ai/glm-5.3-flash`, provider Modal — son reasoning étant obligatoire,
+  thinking forcé des deux côtés, budgets ×6 identiques) ; `release_config`
+  bit-identique. Caveat assumé : référence via OpenRouter tant qu'aucune clé
+  z.ai directe — redo possible plus tard, row 29/08 ci-dessus.
 
-Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé, les
-soaks, l'A/B qualité (la comparaison C4 est passée le 29/08, voir rows et
-checklist ci-dessus).
+Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé et les
+deux soaks (la comparaison C4 et l'A/B qualité sont passés le 29/08, voir rows
+et checklist ci-dessus).
