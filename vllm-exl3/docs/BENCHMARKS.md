@@ -66,8 +66,10 @@ Upstream's 7168/10752/14336 hits are 2/3/4 pages. Rerun with v2:
 python3 tests/bench_prefix_cache.py --runs 3            # default ~8.4k target → 2 pages
 ```
 
-Still pending on this kit: prefix-cache v2, cold long context (200k, then
-probe toward 1M), concurrency (C4 goodput + p99), boot shape-warmup check.
+| 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine** — 200 005 prompt tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse de 40 tokens, petit échantillon) | capacité : pool 1.75M → 200k ≈ 11 % ; pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid ; vs lane SGLang : prefill 1230 tok/s mais plafond pool ~210k, décode 39.6 tok/s | `results/glm53-long-context-long-context-20260829-122213.json` |
+
+Still pending on this kit: 500k/900k cold probes toward the 1M claim,
+prefix-cache v2.2 `coldhit` reading, boot shape-warmup check.
 
 Promotion criteria (inherited from the sibling lane's DFlash2 protocol):
 zero crashes/retracts during the sweep; structured and prose both recorded;
