@@ -502,6 +502,21 @@ export ZAI_API_KEY='...'
 
 Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de qualité sérieuse doit conserver les mêmes prompts, températures, budgets de tokens et tâches agentiques des deux côtés. Les mesures marquantes sont archivées dans [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+## Lane parallèle : vLLM + EXL3 (branche `dev`)
+
+Le répertoire [vllm-exl3/](vllm-exl3/README.md) contient une seconde lane
+produit : les poids **EXL3/TR3 4bpw** servis par **vLLM** via la recette
+[MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)
+(MIT), vendorée puis durcie. Motivation mesurée : fidélité des poids ≈ FP8
+officiel (KLD 0.0246 contre 0.0605 pour le NVFP4 à taille égale), contexte
+validé jusqu'à 1M, décode structured ~63 tok/s mono — au prix d'un TTFT
+batché moins bon que SGLang. La lane SGLang/NVFP4 de ce README reste le
+chemin de production validé ; `vllm-exl3/` est prêt au bring-up (tests
+locaux verts) et attend son protocole de validation sur cluster
+([vllm-exl3/docs/BENCHMARKS.md](vllm-exl3/docs/BENCHMARKS.md)). Les deux
+lanes partagent les outils génériques (`bench-glm53.py`) mais aucun état :
+arrêtez une lane avant de démarrer l'autre.
+
 ## Reproductibilité et garde-fous
 
 - révisions du modèle et de la source BF16 épinglées ;
@@ -547,6 +562,10 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 - [runtime SGLang SM121 audité](https://github.com/0xSero/glm-5.3-flash-sglang-sm121) ;
 - [documentation multi-nœud SGLang](https://docs.sglang.ai/backend/pd_disaggregation.html) ;
 - [recette 2× Spark de MiaAI-Lab](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark) ;
-- [recette Hy3 NVFP4 sur 2× GB10](https://huggingface.co/LibertAIDAI/Hy3-NVFP4/tree/main/deploy).
+- [recette Hy3 NVFP4 sur 2× GB10](https://huggingface.co/LibertAIDAI/Hy3-NVFP4/tree/main/deploy) ;
+- [recette EXL3 vLLM de MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks) (lane `vllm-exl3/`) ;
+- [checkpoint EXL3/TR3 4bpw](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw) et [son miroir public](https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw) ;
+- [drafter DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) (CC BY-NC-ND 4.0) ;
+- [kernels ExLlamaV3](https://github.com/turboderp-org/exllamav3) (format EXL3).
 
 Le code de cette recette est distribué sous licence MIT. Les poids, l'image SGLang et leurs licences restent des artefacts externes distincts.
