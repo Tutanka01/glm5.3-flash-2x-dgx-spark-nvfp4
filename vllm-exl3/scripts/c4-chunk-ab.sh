@@ -15,6 +15,10 @@
 #   vllm-exl3/scripts/c4-chunk-ab.sh --baseline <json>     # other skip artifact
 #   vllm-exl3/scripts/c4-chunk-ab.sh --no-restart          # lane already on --policy
 #
+# The served model id defaults to SERVED_MODEL_NAME (as in start.sh) or
+# GLM-5.3-Flash-EXL3; bench-glm53.py's own default targets the NVFP4 lane and
+# would 404 against this one.
+#
 # Exit code is compare_c4.py's verdict (0 pass / 3 aggregate regression /
 # 4 keep skip); 2 = usage or bench failure.
 set -euo pipefail
@@ -29,6 +33,7 @@ POLICY=256
 RUNS=3
 CONCURRENCY=4
 THINKING=off
+MODEL="${SERVED_MODEL_NAME:-GLM-5.3-Flash-EXL3}"
 NO_RESTART=0
 BASELINE="$LANE_DIR/results/glm53-benchmark-20260829-115750.json"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -37,6 +42,7 @@ OUTPUT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --policy)     POLICY="${2:?}"; shift 2 ;;
+        --model)      MODEL="${2:?}"; shift 2 ;;
         --runs)       RUNS="${2:?}"; shift 2 ;;
         --concurrency) CONCURRENCY="${2:?}"; shift 2 ;;
         --baseline)   BASELINE="${2:?}"; shift 2 ;;
@@ -60,8 +66,9 @@ else
     log "assuming the running lane already uses GLM53_MIXED_PREFILL_CHUNK=$POLICY"
 fi
 
-log "C4 protocol: bench-glm53.py --runs $RUNS --concurrency $CONCURRENCY --thinking $THINKING"
+log "C4 protocol: bench-glm53.py --runs $RUNS --concurrency $CONCURRENCY --thinking $THINKING --model $MODEL"
 python3 "$REPO_DIR/bench-glm53.py" \
+    --model "$MODEL" \
     --runs "$RUNS" --concurrency "$CONCURRENCY" --thinking "$THINKING" \
     --output "$OUTPUT"
 log "artifact: $OUTPUT"
