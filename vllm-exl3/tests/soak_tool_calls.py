@@ -12,7 +12,7 @@ Traffic model (OpenCode-like, stdlib only):
 - each turn offers an OpenCode-flavored toolset (read/edit/bash/glob) and
   instructs one deterministic call, so schema-conformance is checkable;
 - a per-agent salted filler prefix recreates the "large cold prefill mixed
-  with interactive tool traffic" trigger from KNOWN-ISSUES.md;
+  with interactive tool traffic" trigger from docs/EXL3-KNOWN-ISSUES.md;
 - every response is validated client-side: tool known, arguments parse as a
   JSON object, every schema-required key present and non-blank;
 - a failing turn is retried with the identical payload (`--retries`) — the

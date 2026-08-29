@@ -2,7 +2,7 @@
 # soak-day.sh — daily probe for the multi-day OpenCode soak (promotion item).
 #
 # Run on the HEAD node at any cadence (daily recommended). Prints a
-# paste-ready markdown block for the soak journal in docs/SOAK.md:
+# paste-ready markdown block for the soak journal in docs/EXL3-SOAK.md:
 # container uptime/restarts (head + worker), /health, error greps on the
 # server logs, and a small concurrent tool-call probe (issue #10 watch).
 #
@@ -108,5 +108,5 @@ $(last_errors "$LANE_DIR/logs/head.log")
 $(last_errors "$LANE_DIR/logs/worker.log")
 BLOCK
 
-log "paste the block above into vllm-exl3/docs/SOAK.md (journal section)"
+log "paste the block above into docs/EXL3-SOAK.md (journal section)"
 exit "$UNHEALTHY"

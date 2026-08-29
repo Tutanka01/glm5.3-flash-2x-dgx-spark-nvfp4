@@ -45,13 +45,15 @@ it.
 
 ## Reproduce / extend on this kit
 
+Commands run from `vllm-exl3/` unless noted.
+
 1. Serve the lane (`./start.sh`), then run both decode classes:
    ```
    python3 tests/bench_decode.py --phase structured --structured --runs 5 --max-tokens 400 --skip-coherence --out /tmp/exl3-structured.json
    python3 tests/bench_decode.py --phase prose --runs 5 --max-tokens 400 --skip-coherence --out /tmp/exl3-prose.json
    ```
    Record `tok_s_median`, `accept_ratio_median`, and the per-position `pos[]`
-   table into `docs/BENCHMARKS.md`.
+   table into the root journal [BENCHMARKS.md](BENCHMARKS.md).
 2. For the end-to-end quality A/B (promotion item — closer to real usage than
    KLD): identical coding tasks, temperature and token budgets on both sides,
    with raw completions captured and graded deterministically:
@@ -67,6 +69,6 @@ it.
    The grader exec-checks the two coding tasks against fixed unit tests and
    structurally checks the two JSON tasks; a task passes only if every run
    passed. Record both PASS RATEs (EXL3 lane vs official API) in
-   `docs/BENCHMARKS.md` — an A/B without the grader output is an opinion.
-3. When this kit's numbers exist, add them to `docs/BENCHMARKS.md` with the
+   `BENCHMARKS.md` — an A/B without the grader output is an opinion.
+3. When this kit's numbers exist, add them to `BENCHMARKS.md` with the
    artifact name — never replace upstream's baseline rows.

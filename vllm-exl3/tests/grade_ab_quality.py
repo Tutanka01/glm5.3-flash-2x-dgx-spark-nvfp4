@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Grade an A/B quality artifact from bench-glm53.py (EXL3 vs official API).
 
-The KLD panel in docs/QUALITY.md scores the *weights*; this grader scores the
+The KLD panel in docs/EXL3-QUALITY.md scores the *weights*; this grader scores the
 *end-to-end lane* on identical coding tasks, per the last open promotion item.
 Run the comparison with raw content capture, then grade:
 

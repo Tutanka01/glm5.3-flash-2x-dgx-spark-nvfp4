@@ -6,7 +6,7 @@ Reads the artifacts produced by:
     python3 bench-glm53.py --runs 3 --concurrency 4 --thinking off --output <json>
 
 for the baseline policy (`skip`) and the candidate (e.g. `256`), and applies
-the promotion criterion from docs/BENCHMARKS.md:
+the promotion criterion from the root journal docs/BENCHMARKS.md:
 
     "p99 TTFT meaningfully below the skip p99 (16.7 s on this kit) without
      giving back the aggregate"

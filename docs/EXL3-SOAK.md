@@ -1,6 +1,6 @@
 # Multi-day OpenCode soak — protocol (promotion item)
 
-Open promotion item in `docs/BENCHMARKS.md`: *"multi-day OpenCode soak on real
+Open promotion item in `BENCHMARKS.md`: *"multi-day OpenCode soak on real
 agent traffic, restart included"*. This page is the protocol and the journal.
 It exists so the eventual ✅ is an auditable claim, not a vibe.
 
@@ -32,8 +32,8 @@ It exists so the eventual ✅ is an auditable claim, not a vibe.
 3. If the verdict is `UNHEALTHY`, stop and triage before continuing the soak:
    the journal row plus `logs/` decide whether the day restarts the counter.
 4. At the end of the window, re-run the two decode classes and one C4 bench
-   (`tests/bench_decode.py`, `../bench-glm53.py --concurrency 4`) to confirm
-   the perf rows in `docs/BENCHMARKS.md` still reproduce after N days.
+   (from `vllm-exl3/`: `tests/bench_decode.py`, `../bench-glm53.py --concurrency 4`)
+   to confirm the perf rows in `BENCHMARKS.md` still reproduce after N days.
 
 ## What we are watching for
 
@@ -56,11 +56,11 @@ It exists so the eventual ✅ is an auditable claim, not a vibe.
       2026-08-29 baselines;
 - [ ] zero unrecovered blank tool-call arguments across all probes.
 
-Then add the row to the promotion checklist in `docs/BENCHMARKS.md` and link
+Then add the row to the promotion checklist in `BENCHMARKS.md` and link
 this page.
 
 ## Journal
 
-> Append blocks here, oldest last, verbatim from `scripts/soak-day.sh`.
+> Append blocks here, oldest last, verbatim from `vllm-exl3/scripts/soak-day.sh`.
 
 <!-- soak journal starts here -->

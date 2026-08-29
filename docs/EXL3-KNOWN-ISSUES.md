@@ -25,7 +25,7 @@ Mitigations for agent workloads (OpenCode-style):
 - keep `MAX_NUM_SEQS` modest (`4`) — the default here;
 - validate tool-call arguments client-side and retry the request on empty
   required args (a silent retry reproduced clean output upstream) —
-  `tests/soak_tool_calls.py` implements exactly this policy and doubles as
+  `vllm-exl3/tests/soak_tool_calls.py` implements exactly this policy and doubles as
   the promotion soak: concurrent agents, salted cold prefills, per-turn
   validation, bounded retries, artifact with event counts;
 - avoid mixing very large cold prefills with interactive tool traffic when
@@ -50,7 +50,7 @@ wire mismatch that only adds log spam and a 2× TTFT penalty:
 The Triton draft-attention path is causal inside the draft block on this
 image; later-position acceptance collapses (0.918 → ~0.31 structured).
 SM121 picks `FLASH_ATTN` for the non-causal SWA drafter by default. See
-`docs/QUALITY.md`.
+`EXL3-QUALITY.md`.
 
 ## Memory / sizing pitfalls (upstream README, condensed)
 

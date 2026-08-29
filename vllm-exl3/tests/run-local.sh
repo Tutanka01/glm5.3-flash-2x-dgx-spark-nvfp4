@@ -4,7 +4,7 @@
 # Validates shell syntax, the fragile text contracts of start.sh, the overlay
 # patch unit tests, and the bench clients against a mock OpenAI server.
 # Nothing here downloads the checkpoint or requires docker/GPU — hardware
-# validation is the on-cluster protocol in ../vllm-exl3/README.md.
+# validation is the on-cluster protocol: see the root README and docs/BENCHMARKS.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
