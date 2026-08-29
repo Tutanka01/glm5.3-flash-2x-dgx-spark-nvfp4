@@ -171,11 +171,18 @@ def stream_once(
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
         total = time.perf_counter() - started
         error = str(exc)
-        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
-            error += (
-                " — unknown route or model id on this server; check --model "
-                "(and --compare-model) against GET /v1/models"
-            )
+        if isinstance(exc, urllib.error.HTTPError):
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                detail = ""
+            if detail:
+                error += f" — {detail[:300]}"
+            if exc.code == 404:
+                error += (
+                    " — unknown route or model id on this server; check --model "
+                    "(and --compare-model) against GET /v1/models"
+                )
         return Result(
             target=target_name,
             prompt=prompt["name"],
