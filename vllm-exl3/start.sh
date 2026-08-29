@@ -364,6 +364,14 @@ preflight() {
     avail=$(worker_ssh "df -Pk '$WORKER_HOME' 2>/dev/null" | awk 'NR==2{print $4}' || true)
     [ "${avail:-0}" -ge "$need_kb" ] || warn "only $((avail/1024/1024)) GiB free on worker for a ~164 GiB model"
 
+    # The worker HF cache must be writable by the SSH user before the ~164 GiB
+    # sync starts. A root-owned ~/.cache/huggingface (prior sudo/docker
+    # prepare on the worker) otherwise fails mid-sync with a bare mkdir
+    # permission error. mkdir -p is idempotent and is what sync does anyway.
+    if ! worker_ssh "mkdir -p '$WORKER_CACHE_DIR/hub' && test -w '$WORKER_CACHE_DIR/hub'"; then
+        die "worker cannot write $WORKER_CACHE_DIR/hub as $( [ -n "${WORKER_USER:-}" ] && echo "$WORKER_USER" || echo "$USER" ) — fix ownership on the worker, e.g.: ssh $WORKER_SSH \"sudo chown -R ${WORKER_USER:-\$USER}: '$WORKER_CACHE_DIR'\""
+    fi
+
     log "preflight OK (head=$(hostname) ${HEAD_IP}, worker=${WORKER_SSH})"
 }
 
