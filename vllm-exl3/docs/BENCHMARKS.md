@@ -40,42 +40,45 @@ Prefix caching (1M serve, real user + assistant + follow-up):
 Context capacity: 1M `max_model_len` with pool 1,754,237 tokens (1.75×) at
 util 0.87; live ~256k ×3 concurrent held (29.5% peak KV).
 
-## This kit (2× GB10, TP=2, RoCE) — first hardware results 2026-08-29
+## This kit (2× GB10, TP=2, RoCE) — ThinkStation PGX pair, 2026-08-29
 
-Serve path validated on the reference kit (ThinkStation PGX pair, 2026-08-29):
-boot clean, DFlash2 k=7, 1M serve. Decode protocol runs below; artifacts were
-written to `/tmp` on the kit — copy into `results/` to archive:
-
-```bash
-cp /tmp/exl3-structured.json /tmp/exl3-prose.json results/
-```
+Serve path = upstream's, byte-identical (image pulled, no source changes);
+host-side hardening only. Field data also filed upstream as MiaAI-Lab issue #32.
 
 | Date | Protocol | Result | Notes | Artifact |
 |---|---|---|---|---|
-| 2026-08-29 | `bench_decode.py --phase structured --structured --runs 5 --max-tokens 400` | **66.7 tok/s** median (63.3–68.6), TTFT 0.46 s, accept 0.959 / 6.71 per step | **above upstream baseline** (61.7 lab / 62.9 sparkDash, accept 0.918); per-position 1.0/1.0/1.0/0.98/0.97/0.90/0.89 — no late-position collapse, drafter attention path healthy | `/tmp/exl3-structured.json` |
-| 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s median (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | in upstream band (26.9 lab / 27.1 second kit); per-position shape matches the DFlash2 signature | `/tmp/exl3-prose.json` |
-| 2026-08-29 | `bench_prefix_cache.py` v1 (--prompt-tokens 7680) | superseded | v1 flaw: sequential runs reused one chat (colds contaminated) and the prompt sat below the 2nd 3584-token page → hit 0.5265 = 3584/6805 exactly. Confirmed the page-granular KpoolTail model; v2 adds unique content, cache reset, hit_efficiency | `results/glm53-exl3-prefix-cache-20260829-112959.json` |
-| 2026-08-29 | `bench_prefix_cache.py` v2.1 (--prompt-tokens 8400) | **hit 0.8541, eff 0.9999** — every full 3584-page of the warm prompt reused | page model confirmed (7168 = 2×3584). Open anomaly: cold TTFT dropped 10.3 s → **1.9 s** between sessions (warm steady at ~2.4 s) — impossible for a full 8359-token prefill at the ~810 tok/s rate; `coldhit` instrumentation (v2.2) + server `StartedAt` will discriminate prefill-rate-change vs phantom cold hits | `results/glm53-exl3-prefix-cache-20260829-115706.json` |
-| 2026-08-29 | `../bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, aggregate **54.8 tok/s**, TTFT median 1.61 s, **p99 16.7 s** | TTFT staircase matches `GLM53_MIXED_PREFILL_CHUNK=skip`: new prefills defer until a decode drains (coding r2 TTFT 9.54 s ≈ coding r1 total 9.50 s). Known upstream issue #19 tradeoff; candidate softener `GLM53_MIXED_PREFILL_CHUNK=256` (restart) | `results/glm53-benchmark-20260829-115750.json` |
+| 2026-08-29 | `bench_decode.py --phase structured --structured --runs 5 --max-tokens 400` | **66.7 tok/s** median (63.3–68.6), TTFT 0.46 s, accept 0.959 / 6.71 per step | **above upstream baseline** (61.7 lab / 62.9 sparkDash, accept 0.918); per-position 1.0/1.0/1.0/0.98/0.97/0.90/0.89 — no late-position collapse, drafter attention path healthy. Serve path identical, so the delta is kit variance + the probabilistic draft sampler, not our changes | `/tmp/exl3-structured.json` |
+| 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s median (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | in upstream band (26.9 lab / 27.1 second kit); per-position shape matches the DFlash2 signature — the ~2.6× structured/prose asymmetry is the drafter's known character | `/tmp/exl3-prose.json` |
+| 2026-08-29 | `bench_prefix_cache.py` v2.1+ (`--prompt-tokens 8400`) | **hit 0.8541, eff 0.9999** — every full 3584-page of the warm prompt reused; warm TTFT 2.5 s vs 10.3 s true cold (**4.1×**) | page model confirmed: hits are block-aligned to the **3584-token hybrid MLA page** (`floor(tokens/3584)×3584`), and 7168 = 2×3584 exactly. Earlier v1/v2.0 oddities were bench instrumentation, not the stack: a metrics window covering cold+warm halves the ratio, and content reuse across sessions fakes colds because the image has **no cache-reset endpoint** (documented upstream, issue #31; fixed client-side by the per-session salt) | `results/glm53-exl3-prefix-cache-*.json` |
+| 2026-08-29 | `../bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, aggregate **54.8 tok/s**, TTFT median 1.61 s, **p99 16.7 s** | TTFT staircase matches `GLM53_MIXED_PREFILL_CHUNK=skip`: new prefills defer until a decode drains (coding r2 TTFT 9.54 s ≈ coding r1 total 9.50 s). Known upstream tradeoff (issue #19 pattern); candidate softener `GLM53_MIXED_PREFILL_CHUNK=256` | `results/glm53-benchmark-20260829-115750.json` |
+| 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok, 3/3 needles (sha256 exact), API healthy** — 200,005 tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, decode 150.2 tok/s (40-token answer, small sample) | pool 1.75M → 200k ≈ 11%. No reset endpoint on this build → the SESSION filler guarantees cold | `results/glm53-long-context-long-context-20260829-122213.json` |
+| 2026-08-29 | `… --target-tokens 500000 --cold --label 500k-cold` | **ok, 3/3 needles, API healthy** — 500,011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | earlier runs' pages still resident; −4% prefill vs 200k | `results/glm53-long-context-500k-cold-20260829-123606.json` |
+| 2026-08-29 | `… --target-tokens 900000 --cold --label 900k-cold` | **ok, 3/3 needles, API healthy — 900,007 tokens cold** | TTFT 1138.4 s, prefill 790.6 tok/s; 1.6M cumulative pages resident in the 1.75M pool | `results/glm53-long-context-900k-cold-20260829-125558.json` |
+| 2026-08-29 | `… --target-tokens 990000 --cold --label 990k-cold` (after restart) | **ok, 3/3 needles, API healthy — 990,007 tokens: the full 1M window validated cold** | TTFT 1231.9 s, prefill 803.6 tok/s (fresh boot, empty cache); `decode=null` = the minimum-window guard correctly rejected the 40-token sample | `results/glm53-long-context-990k-cold-20260829-133322.json` |
 
-Prefix-cache page model (confirmed by the v1 run): hits are block-aligned to
-the **3584-token hybrid MLA page** — `floor(tokens/3584)×3584` at best.
-Upstream's 7168/10752/14336 hits are 2/3/4 pages. Rerun with v2:
+Prefill across the ramp: 871 → 836 → 791 → 804 tok/s — essentially flat
+(worst −9%), the sparse-MLA signature.
 
-```bash
-python3 tests/bench_prefix_cache.py --runs 3            # default ~8.4k target → 2 pages
-```
+Still pending on this kit: `coldhit` reading on a salted prefix run,
+`GLM53_MIXED_PREFILL_CHUNK=256` C4 comparison, multi-day OpenCode soak.
 
-| 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine** — 200 005 prompt tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse de 40 tokens, petit échantillon) | capacité : pool 1.75M → 200k ≈ 11 % ; pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid ; vs lane SGLang : prefill 1230 tok/s mais plafond pool ~210k, décode 39.6 tok/s | `results/glm53-long-context-long-context-20260829-122213.json` |
-| 2026-08-29 | `bench_long_context.py --target-tokens 500000 --cold --label 500k-cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages résiduelles des runs précédents toujours dans le pool ; dégradation prefill 200k→500k : −4 % | `results/glm53-long-context-500k-cold-20260829-123606.json` |
-| 2026-08-29 | `bench_long_context.py --target-tokens 900000 --cold --label 900k-cold` | **ok=True, 3/3 aiguilles (sha256 exact), API saine — 900 007 tokens validés à froid** | TTFT 1138.4 s, prefill 790.6 tok/s (−9 % vs 200k — dégradation quasi plate, signature sparse-MLA) ; pages 200k+500k encore résidentes (1.6M cumulés dans le pool 1.75M) ; `decode=516638 tok/s` dans l'artefact = artefact de fenêtre (garde minimum ajoutée au bench) | `results/glm53-long-context-900k-cold-20260829-125558.json` |
+Promotion criteria (inherited from the sibling lane's DFlash2 protocol, plus
+lane-specific items):
 
-| 2026-08-29 | `bench_long_context.py --target-tokens 990000 --cold --label 990k-cold` (après restart) | **ok=True, 3/3 aiguilles (sha256 exact), API saine — 990 007 tokens : fenêtre 1M validée à froid** | TTFT 1231.9 s, prefill 803.6 tok/s (boot neuf, cache vide) ; `decode=null` = la garde de fenêtre a bien filtré l'échantillon 40 tokens | `results/glm53-long-context-990k-cold-20260829-133322.json` |
+- zero crashes/retracts during the sweep; structured and prose both recorded;
+  acceptance per position sane (no later-position collapse) ✅ 2026-08-29
+- cold long-context 3/3 needles with API healthy after ✅ 2026-08-29 (200k /
+  500k / 900k / 990k)
+- prefix-cache reuse at or near the page model (eff ≥ 0.9) ✅ 2026-08-29
+- `GLM53_MIXED_PREFILL_CHUNK=256` C4 comparison: p99 TTFT meaningfully below
+  the `skip` p99 (16.7 s) without giving back the aggregate — decides the
+  lane's default scheduler policy ⬜
+- tool-calling soak under concurrent load: no blank required arguments
+  (upstream issue #10 is open — client-side validation + retry until then) ⬜
+- multi-day OpenCode soak on real agent traffic, restart included ⬜
+- quality A/B against the official API on identical coding/agent tasks
+  (the KLD argument deserves an end-to-end confirmation) ⬜
 
-Still pending on this kit: prefix-cache v2.2 `coldhit` reading, boot shape-warmup check.
-
-Promotion criteria (inherited from the sibling lane's DFlash2 protocol):
-zero crashes/retracts during the sweep; structured and prose both recorded;
-acceptance per position sane (no later-position collapse); cold long-context
-3/3 needles with API healthy after; p99 TTFT at C4 within +10% of the
-baseline run before adopting for production.
+Flip the repo default (README ordering, `main` merge) only when every box is
+ticked; until then this lane is the documented pick for long context and
+weight fidelity, and the SGLang lane stays the default for bursty agents.

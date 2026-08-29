@@ -7,11 +7,14 @@ fixes. The sibling lane (`../README.md`, SGLang + NVFP4) stays untouched; the
 two are alternative products over the same hardware, not competitors to
 rewrite.
 
-> **Status: bring-up ready, not yet hardware-validated on this kit.** The
-> serve path is upstream's, reproduced upstream on a second GB10 pair. The
-> changes this vendor adds are host-side (bring-up robustness + tooling) and
-> are covered by `tests/run-local.sh`; the on-cluster protocol to validate is
-> in `docs/BENCHMARKS.md`.
+> **Status: hardware-validated on this kit (2026-08-29, 2× ThinkStation PGX).**
+> Decode **66.7 tok/s** structured / 0.959 accept (above upstream's published
+> bands), prefix-cache **4.1×** on follow-ups (page model confirmed, eff 1.0),
+> and **990,007-token cold context validated needle-exact** on a fresh boot —
+> the full 1M window. Full journal with artifacts in `docs/BENCHMARKS.md`;
+> filed upstream as [MiaAI-Lab issue #32](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/issues/32).
+> Not yet promoted to default lane: see the promotion checklist in
+> `docs/BENCHMARKS.md`.
 
 ## Why this lane exists (product decision)
 

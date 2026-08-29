@@ -507,13 +507,28 @@ Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de
 Le répertoire [vllm-exl3/](vllm-exl3/README.md) contient une seconde lane
 produit : les poids **EXL3/TR3 4bpw** servis par **vLLM** via la recette
 [MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)
-(MIT), vendorée puis durcie. Motivation mesurée : fidélité des poids ≈ FP8
-officiel (KLD 0.0246 contre 0.0605 pour le NVFP4 à taille égale), contexte
-validé jusqu'à 1M, décode structured ~63 tok/s mono — au prix d'un TTFT
-batché moins bon que SGLang. La lane SGLang/NVFP4 de ce README reste le
-chemin de production validé ; `vllm-exl3/` est prêt au bring-up (tests
-locaux verts) et attend son protocole de validation sur cluster
-([vllm-exl3/docs/BENCHMARKS.md](vllm-exl3/docs/BENCHMARKS.md)). Les deux
+(MIT), vendorée puis durcie. **Validée sur le cluster le 2026-08-29** :
+990 007 tokens froids validés au needle-exact (fenêtre 1M complète),
+66.7 tok/s structured à l'acceptation 0.959, prefix-cache 4.1× sur les
+follow-ups, poids ≈ FP8 officiel (KLD 0.0246 contre 0.0605 pour le NVFP4 à
+taille égale) — au prix d'un TTFT batché moins bon (p99 16.7 s à C4 avec la
+politique `skip`). Journal complet avec artefacts :
+[vllm-exl3/docs/BENCHMARKS.md](vllm-exl3/docs/BENCHMARKS.md).
+
+**Quelle lane pour quoi :**
+
+| Besoin | Lane |
+|---|---|
+| sous-agents OpenCode en rafales, TTFT interactif | **SGLang/NVFP4** (p99 0.7 s à C4) |
+| contexte > 210k (jusqu'à 1M validé) | **EXL3/vLLM** |
+| fidélité de poids maximale (code, raisonnement) | **EXL3/vLLM** |
+| conversations multi-tours longues (réutilisation prefix) | **EXL3/vLLM** (4.1× sur les follow-ups) |
+
+Par défaut, cette lane reste SGLang/NVFP4 tant que la lane EXL3 n'a pas
+passé son checklist de promotion (soak agentique multi-jours, validation
+tool-calling sous charge, expérience `GLM53_MIXED_PREFILL_CHUNK=256`,
+A/B qualité contre l'API officielle) — voir
+[vllm-exl3/docs/BENCHMARKS.md](vllm-exl3/docs/BENCHMARKS.md). Les deux
 lanes partagent les outils génériques (`bench-glm53.py`) mais aucun état :
 arrêtez une lane avant de démarrer l'autre.
 
