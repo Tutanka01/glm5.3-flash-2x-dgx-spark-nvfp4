@@ -40,30 +40,32 @@ Prefix caching (1M serve, real user + assistant + follow-up):
 Context capacity: 1M `max_model_len` with pool 1,754,237 tokens (1.75×) at
 util 0.87; live ~256k ×3 concurrent held (29.5% peak KV).
 
-## This kit (2× GB10, TP=2, RoCE) — to be filled on first hardware validation
+## This kit (2× GB10, TP=2, RoCE) — first hardware results 2026-08-29
 
-Status: **not yet validated**. The serve path is upstream's (reproduced on a
-second kit upstream, 2026-08-28: structured 38–62, prose 27.1 after
-kit-specific GID/NIC adjustments), but this vendor adds host-side changes
-(sync marker, health-watch, per-rank GID) that only touch bring-up, not the
-serve path. First validation must cover:
+Serve path validated on the reference kit (ThinkStation PGX pair, 2026-08-29):
+boot clean, DFlash2 k=7, 1M serve. Decode protocol runs below; artifacts were
+written to `/tmp` on the kit — copy into `results/` to archive:
 
-1. Boot + smoke: `./start.sh`, then `curl :8888/v1/models` →
-   `GLM-5.3-Flash-EXL3`, one temp-0 generation.
-2. Decode classes: `tests/bench_decode.py --phase structured --structured
-   --runs 5 --max-tokens 400 --skip-coherence` and `--phase prose --runs 5` →
-   record `tok_s_median`, `accept_ratio_median`, per-position table.
-3. Prefix cache: `python3 tests/bench_prefix_cache.py --runs 3
-   --prompt-tokens 7680` → cold vs warm TTFT + hit ratio (expect the
-   upstream 93%-reuse / ~8× TTFT regime, modulo scheduler).
-4. Long context: `python3 tests/bench_long_context.py --target-tokens 200000
-   --cold` then probe toward 1M (needle protocol, 3/3 retrieval + API health).
-5. Concurrency: `../bench-glm53.py --runs 3 --concurrency 4` (runtime-agnostic
-   OpenAI client: TTFT p99, aggregate goodput).
+```bash
+cp /tmp/exl3-structured.json /tmp/exl3-prose.json results/
+```
 
-| Date | Protocol | Result | Artifact |
-|---|---|---|---|
-| — | — | — | — |
+| Date | Protocol | Result | Notes | Artifact |
+|---|---|---|---|---|
+| 2026-08-29 | `bench_decode.py --phase structured --structured --runs 5 --max-tokens 400` | **66.7 tok/s** median (63.3–68.6), TTFT 0.46 s, accept 0.959 / 6.71 per step | **above upstream baseline** (61.7 lab / 62.9 sparkDash, accept 0.918); per-position 1.0/1.0/1.0/0.98/0.97/0.90/0.89 — no late-position collapse, drafter attention path healthy | `/tmp/exl3-structured.json` |
+| 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s median (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | in upstream band (26.9 lab / 27.1 second kit); per-position shape matches the DFlash2 signature | `/tmp/exl3-prose.json` |
+| 2026-08-29 | `bench_prefix_cache.py` v1 (--prompt-tokens 7680) | superseded | v1 flaw: sequential runs reused one chat (colds contaminated) and the prompt sat below the 2nd 3584-token page → hit 0.5265 = 3584/6805 exactly. Confirmed the page-granular KpoolTail model; v2 adds unique content, cache reset, hit_efficiency | `results/glm53-exl3-prefix-cache-20260829-112959.json` |
+
+Prefix-cache page model (confirmed by the v1 run): hits are block-aligned to
+the **3584-token hybrid MLA page** — `floor(tokens/3584)×3584` at best.
+Upstream's 7168/10752/14336 hits are 2/3/4 pages. Rerun with v2:
+
+```bash
+python3 tests/bench_prefix_cache.py --runs 3            # default ~8.4k target → 2 pages
+```
+
+Still pending on this kit: prefix-cache v2, cold long context (200k, then
+probe toward 1M), concurrency (C4 goodput + p99), boot shape-warmup check.
 
 Promotion criteria (inherited from the sibling lane's DFlash2 protocol):
 zero crashes/retracts during the sweep; structured and prose both recorded;
