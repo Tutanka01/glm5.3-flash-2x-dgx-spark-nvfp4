@@ -35,7 +35,7 @@ CONCURRENCY=4
 THINKING=off
 MODEL="${SERVED_MODEL_NAME:-GLM-5.3-Flash-EXL3}"
 NO_RESTART=0
-BASELINE="$LANE_DIR/results/glm53-benchmark-20260829-115750.json"
+BASELINE="$LANE_DIR/results/glm53-benchmark-c4-chunkskip-20260829-173451.json"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUTPUT=""
 

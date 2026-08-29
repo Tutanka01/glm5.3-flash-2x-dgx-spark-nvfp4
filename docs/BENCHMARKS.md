@@ -241,6 +241,8 @@ util 0.87 ; ~256k ×3 concurrents tenus en live (29,5 % de KV au pic).
 | 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s médian (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | dans la bande amont (26.9 lab / 27.1 second kit) ; la forme par position colle à la signature DFlash2 — l'asymétrie ~2.6× structured/prose est le caractère connu du drafter | `/tmp/exl3-prose.json` |
 | 2026-08-29 | `bench_prefix_cache.py` v2.1+ (`--prompt-tokens 8400`) | **hit 0.8541, eff 0.9999** — chaque page 3584 complète du prompt chaud réutilisée ; TTFT chaud 2.5 s vs 10.3 s vrai froid (**4.1×**) | modèle de pages confirmé : les hits sont alignés sur la **page hybride MLA de 3584 tokens** (`floor(tokens/3584)×3584`), et 7168 = 2×3584 exactement. Les bizarreries v1/v2.0 venaient de l'instrumentation du bench, pas de la stack : une fenêtre métriques couvrant froid+chaud divise le ratio par deux, et la réutilisation de contenu entre sessions fabrique de faux froids car l'image n'a **pas d'endpoint de reset du cache** (documenté en amont, issue #31 ; corrigé côté client par le sel de session) | `vllm-exl3/results/glm53-exl3-prefix-cache-*.json` |
 | 2026-08-29 | `./bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, agrégé **54.8 tok/s**, TTFT médian 1.61 s, **p99 16.7 s** | escalier de TTFT conforme à `GLM53_MIXED_PREFILL_CHUNK=skip` : les nouveaux prefills attendent qu'un décode se vide (coding r2 TTFT 9.54 s ≈ total coding r1 9.50 s). Tradeoff amont connu (schéma issue #19) ; adoucisseur candidat `GLM53_MIXED_PREFILL_CHUNK=256` | `vllm-exl3/results/glm53-benchmark-20260829-115750.json` |
+| 2026-08-29 | `…` (skip, re-mesure après ajout de `wall_seconds` au bench) | 9/9 ok, agrégé **50.0 tok/s** (wall exact 37.1 s), TTFT médian 2.60 s, **p99 14.79 s** | escalier reproduit (TTFT 0.83 → 2.6 → 8.6 → 9.2 → 14.8 : prefills en file derrière les décodes) ; remplace la mesure de 11h57 dont le wall manquait — le fallback `max(total_seconds)` du comparateur surestimait l'agrégé (72.1 tok/s estimés) et avait faussé une première comparaison | `vllm-exl3/results/glm53-benchmark-c4-chunkskip-20260829-173451.json` |
+| 2026-08-29 | `c4-chunk-ab.sh --no-restart` sous `GLM53_MIXED_PREFILL_CHUNK=256` (même protocole C4) | 9/9 ok, agrégé **64.3 tok/s** (wall 30.7 s), TTFT médian 0.85 s, **p99 1.22 s** — verdict **PASS** : p99 ratio 0.083 (≤ 0.75), agrégé ratio 1.288 (≥ 0.95) | p99 TTFT **÷12** (14.8 → 1.2 s) et agrégé **+29 %** vs skip : le plafond mixte 256 élimine l'escalier sans rendre le goodput ; politique scheduler par défaut de la lane → **256** | `vllm-exl3/results/glm53-benchmark-c4-chunk256-20260829-173038.json` |
 | 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok, 3/3 aiguilles (sha256 exact), API saine** — 200 005 tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse 40 tokens, petit échantillon) | pool 1.75M → 200k ≈ 11 %. Pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid | `vllm-exl3/results/glm53-long-context-long-context-20260829-122213.json` |
 | 2026-08-29 | `… --target-tokens 500000 --cold --label 500k-cold` | **ok, 3/3 aiguilles, API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages des runs précédents encore résidentes ; −4 % de prefill vs 200k | `vllm-exl3/results/glm53-long-context-500k-cold-20260829-123606.json` |
 | 2026-08-29 | `… --target-tokens 900000 --cold --label 900k-cold` | **ok, 3/3 aiguilles, API saine — 900 007 tokens froids** | TTFT 1138.4 s, prefill 790.6 tok/s ; 1.6M de pages cumulées résidentes dans le pool 1.75M | `vllm-exl3/results/glm53-long-context-900k-cold-20260829-125558.json` |
@@ -265,7 +267,11 @@ les agents en rafales.
   ✅ 2026-08-29
 - comparaison C4 `GLM53_MIXED_PREFILL_CHUNK=256` : p99 TTFT nettement sous le
   p99 `skip` (16.7 s) sans rendre l'agrégé — décide de la politique scheduler
-  par défaut de la lane ⬜
+  par défaut de la lane ✅ 2026-08-29
+  → verdict PASS (`tests/compare_c4.py`) : p99 14.79 → 1.22 s (ratio 0.083),
+  agrégé 50.0 → 64.3 tok/s (ratio 1.288). Défaut de la lane → **256**
+  (à poser dans `vllm-exl3/.env`, puis re-enregistrer les rows prefix-cache et
+  long-context sous la nouvelle politique). Rows journal : 29/08 ci-dessus.
   → `vllm-exl3/scripts/c4-chunk-ab.sh` boote la politique candidate, rejoue le
   protocole C4 identique et applique le verdict via `vllm-exl3/tests/compare_c4.py`
   (p99 ≤ 0.75×, agrégé ≥ 0.95×). Ajouter la row ci-dessus après le run.
@@ -285,5 +291,6 @@ les agents en rafales.
   `vllm-exl3/tests/grade_ab_quality.py --artifact <json>` ; les deux scores
   vont dans la row.
 
-Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé, la
-comparaison C4 ci-dessus, les soaks, l'A/B qualité.
+Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé, les
+soaks, l'A/B qualité (la comparaison C4 est passée le 29/08, voir rows et
+checklist ci-dessus).
