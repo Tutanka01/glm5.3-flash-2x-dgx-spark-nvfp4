@@ -11,8 +11,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Caller exports must survive the `set -a; source .env` block. Every variable
+# listed here needs a matching _cli_* save/restore pair in the start.sh preamble.
+OVERRIDES = {
+    "MAX_NUM_SEQS": ("2", "4"),
+    "GLM53_MIXED_PREFILL_CHUNK": ("skip", "256"),
+}
 
-def test_max_num_seqs_inline_override_wins() -> None:
+
+def test_override_wins(variable: str, env_value: str, dotenv_value: str) -> None:
     source = (ROOT / "start.sh").read_text()
     marker = "# ----------------------------- configuration -------------------------------"
     preamble, separator, _rest = source.partition(marker)
@@ -23,13 +30,13 @@ def test_max_num_seqs_inline_override_wins() -> None:
         script = tmp / "start.sh"
         script.write_text(
             preamble
-            + '\nprintf "MAX_NUM_SEQS=%s\\n" "${MAX_NUM_SEQS:-unset}"\n'
+            + f'\nprintf "{variable}=%s\\n" "${{{variable}:-unset}}"\n'
         )
         script.chmod(0o755)
-        (tmp / ".env").write_text("MAX_NUM_SEQS=2\n")
+        (tmp / ".env").write_text(f"{variable}={dotenv_value}\n")
 
         env = os.environ.copy()
-        env["MAX_NUM_SEQS"] = "4"
+        env[variable] = env_value
         result = subprocess.run(
             ["bash", str(script)],
             check=True,
@@ -38,9 +45,13 @@ def test_max_num_seqs_inline_override_wins() -> None:
             env=env,
         )
 
-    assert result.stdout.strip() == "MAX_NUM_SEQS=4"
+    assert result.stdout.strip() == f"{variable}={env_value}", (
+        f"caller export {variable}={env_value} was clobbered by .env "
+        f"({dotenv_value}) — add it to the _cli_* save/restore block"
+    )
 
 
 if __name__ == "__main__":
-    test_max_num_seqs_inline_override_wins()
+    for variable, (dotenv_value, env_value) in OVERRIDES.items():
+        test_override_wins(variable, env_value, dotenv_value)
     print("start.sh caller override regression OK")

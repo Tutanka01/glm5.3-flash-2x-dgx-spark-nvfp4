@@ -59,8 +59,12 @@ host-side hardening only. Field data also filed upstream as MiaAI-Lab issue #32.
 Prefill across the ramp: 871 → 836 → 791 → 804 tok/s — essentially flat
 (worst −9%), the sparse-MLA signature.
 
-Still pending on this kit: `coldhit` reading on a salted prefix run,
-`GLM53_MIXED_PREFILL_CHUNK=256` C4 comparison, multi-day OpenCode soak.
+Still pending on this kit: `coldhit` reading on a salted prefix run, the
+`GLM53_MIXED_PREFILL_CHUNK=256` C4 comparison (`scripts/c4-chunk-ab.sh` runs
+the boot + bench + verdict end to end), the tool-calling soak
+(`tests/soak_tool_calls.py`), the multi-day OpenCode soak
+(`docs/SOAK.md`), and the quality A/B against the official API
+(`../bench-glm53.py --save-content` + `tests/grade_ab_quality.py`).
 
 Promotion criteria (inherited from the sibling lane's DFlash2 protocol, plus
 lane-specific items):
@@ -73,11 +77,21 @@ lane-specific items):
 - `GLM53_MIXED_PREFILL_CHUNK=256` C4 comparison: p99 TTFT meaningfully below
   the `skip` p99 (16.7 s) without giving back the aggregate — decides the
   lane's default scheduler policy ⬜
+  → `scripts/c4-chunk-ab.sh` boots the candidate policy, runs the identical
+  C4 protocol, and applies the verdict via `tests/compare_c4.py`
+  (p99 ≤ 0.75×, aggregate ≥ 0.95×). Append the row above when run.
 - tool-calling soak under concurrent load: no blank required arguments
   (upstream issue #10 is open — client-side validation + retry until then) ⬜
+  → `tests/soak_tool_calls.py --agents 8 --turns 16` with concurrent cold
+  prefills (`--filler-words 8000`, fresh `--salt` per run); exit 0 with only
+  recovered blank-arg events is the pass, plus the raw event counts.
 - multi-day OpenCode soak on real agent traffic, restart included ⬜
+  → protocol + journal in `docs/SOAK.md` (`scripts/soak-day.sh` daily probe).
 - quality A/B against the official API on identical coding/agent tasks
   (the KLD argument deserves an end-to-end confirmation) ⬜
+  → `../bench-glm53.py --prompts tests/ab_quality_prompts.jsonl --runs 1
+  --thinking off --save-content --compare-*` then
+  `tests/grade_ab_quality.py --artifact <json>`; both scores go in the row.
 
 Flip the repo default (README ordering, `main` merge) only when every box is
 ticked; until then this lane is the documented pick for long context and

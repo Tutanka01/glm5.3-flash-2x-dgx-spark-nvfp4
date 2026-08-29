@@ -24,7 +24,10 @@ scheduler fix (`GLM53_MIXED_PREFILL_CHUNK=skip`) does not eliminate it.
 Mitigations for agent workloads (OpenCode-style):
 - keep `MAX_NUM_SEQS` modest (`4`) — the default here;
 - validate tool-call arguments client-side and retry the request on empty
-  required args (a silent retry reproduced clean output upstream);
+  required args (a silent retry reproduced clean output upstream) —
+  `tests/soak_tool_calls.py` implements exactly this policy and doubles as
+  the promotion soak: concurrent agents, salted cold prefills, per-turn
+  validation, bounded retries, artifact with event counts;
 - avoid mixing very large cold prefills with interactive tool traffic when
   correctness matters more than throughput.
 

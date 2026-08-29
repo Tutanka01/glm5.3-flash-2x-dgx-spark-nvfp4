@@ -69,6 +69,7 @@ class Result:
     decode_tokens_per_second: float | None
     content_sha256: str | None
     content_chars: int
+    content: str | None = None  # only with --save-content (A/B quality grading)
 
 
 def urlopen(request: urllib.request.Request, timeout: int):  # type: ignore[no-untyped-def]
@@ -109,6 +110,7 @@ def stream_once(
     run_number: int,
     timeout: int,
     thinking: str = "default",
+    save_content: bool = False,
 ) -> Result:
     payload = {
         "model": model,
@@ -208,6 +210,7 @@ def stream_once(
         decode_tokens_per_second=decode_rate,
         content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         content_chars=len(content),
+        content=content if save_content else None,
     )
 
 
@@ -269,6 +272,12 @@ def main() -> int:
              "lanes whose chat template defaults thinking on (GLM vLLM lane), "
              "otherwise small max_tokens budgets stream no content deltas.",
     )
+    parser.add_argument(
+        "--save-content",
+        action="store_true",
+        help="store raw completions in the artifact (needed for the A/B "
+             "quality grader; large artifacts otherwise)",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -309,6 +318,7 @@ def main() -> int:
                 run_number=0,
                 timeout=args.timeout,
                 thinking=args.thinking,
+                save_content=args.save_content,
             )
             warmup_results.append(warmup)
             if not warmup.ok:
@@ -337,6 +347,7 @@ def main() -> int:
                         run_number=run_number,
                         timeout=args.timeout,
                         thinking=args.thinking,
+                        save_content=args.save_content,
                     )
                 )
         else:
@@ -357,6 +368,7 @@ def main() -> int:
                         run_number=run_number,
                         timeout=args.timeout,
                         thinking=args.thinking,
+                        save_content=args.save_content,
                     ): (prompt["name"], run_number)
                     for prompt, run_number in tasks
                 }
@@ -414,6 +426,7 @@ def main() -> int:
         "targets": [
             {"name": name, "base_url": url, "model": model} for name, url, model, _ in targets
         ],
+        "wall_seconds": wall_seconds,
         "results": [asdict(result) for result in results],
         "warmups_discarded": [asdict(result) for result in warmup_results],
     }

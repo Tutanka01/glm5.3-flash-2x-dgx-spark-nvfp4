@@ -73,6 +73,10 @@ verbatim.** Host-side bring-up and tooling: hardened.
 | Worker-death detection in the `/health` wait (3 strikes ≈ 30 s) | upstream issue #22: fail fast with logs instead of polling for `READY_TIMEOUT` |
 | `tests/bench_prefix_cache.py` | cold vs warm follow-up TTFT + prefix-cache hit ratio (upstream's 9.7 s → 1.17 s protocol, made reproducible) |
 | `tests/bench_long_context.py` | needle-protocol cold-context bench adapted from the SGLang lane (vLLM `/reset_prefix_cache`, capability gate via `/v1/models`) |
+| `tests/soak_tool_calls.py` | issue-#10 soak: concurrent agent sessions with schema validation of every tool call + bounded retry on blank required args |
+| `tests/compare_c4.py` + `scripts/c4-chunk-ab.sh` | `MIXED_PREFILL_CHUNK` skip-vs-256 A/B at C4 with the promotion verdict (p99 vs aggregate) |
+| `tests/grade_ab_quality.py` + `tests/ab_quality_prompts.jsonl` | deterministic grader for the EXL3-vs-official-API coding A/B (`bench-glm53.py --save-content`) |
+| `scripts/soak-day.sh` + `docs/SOAK.md` | daily multi-day soak probe (uptime, error greps, tool-call probe) + journal protocol |
 | `tests/run-local.sh` | no-GPU test suite: shell syntax, fragile text contracts, overlay patch tests, bench smoke against a mock server |
 | `docs/QUALITY.md`, `docs/KNOWN-ISSUES.md`, `docs/BENCHMARKS.md` | KLD evidence, issue #10/#19 behaviour guides, baseline + promotion criteria |
 
@@ -96,6 +100,15 @@ python3 tests/bench_long_context.py --target-tokens 200000 --cold
 
 # 4. concurrency / goodput (repo-level client, runtime-agnostic)
 python3 ../bench-glm53.py --model GLM-5.3-Flash-EXL3 --runs 3 --concurrency 4
+
+# 5. promotion items still open (see docs/BENCHMARKS.md checklist):
+scripts/c4-chunk-ab.sh                     # MIXED_PREFILL_CHUNK skip vs 256 at C4, verdict included
+python3 tests/soak_tool_calls.py --agents 8 --turns 16   # issue-#10 tool-call soak (validation + retry)
+scripts/soak-day.sh                        # daily multi-day soak probe (protocol: docs/SOAK.md)
+python3 ../bench-glm53.py --prompts tests/ab_quality_prompts.jsonl \
+    --runs 1 --thinking off --save-content \
+    --compare-base-url <official API> --compare-model glm-5.3-flash
+python3 tests/grade_ab_quality.py --artifact results/ab-quality-<stamp>.json
 ```
 
 ## Known issues you must design around

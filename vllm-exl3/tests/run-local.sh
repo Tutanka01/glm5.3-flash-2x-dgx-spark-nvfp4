@@ -19,8 +19,9 @@ if bash -n start.sh && bash -n stop.sh && bash -n download.sh \
 
 # 2. python compile of everything importable
 if python3 -m py_compile tests/bench_decode.py tests/bench_prefix_cache.py \
-    tests/bench_long_context.py tests/test_*.py overlay/patch_*.py 2>/dev/null; then
-    ok "py_compile (benches, tests, overlay patches)"
+    tests/bench_long_context.py tests/soak_tool_calls.py tests/compare_c4.py \
+    tests/grade_ab_quality.py tests/test_*.py overlay/patch_*.py 2>/dev/null; then
+    ok "py_compile (benches, soak, comparators, tests, overlay patches)"
 else
     bad "py_compile"
 fi
@@ -44,6 +45,10 @@ if [ "$h" = "1" ] && [ "$w" = "1" ]; then ok "per-rank GID wiring (head+worker)"
 for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination test_suppress_stops; do
     if python3 "tests/${t}.py" >/dev/null 2>&1; then ok "$t"; else bad "$t"; fi
 done
+
+# 4b. comparator/grader self-tests (math + deterministic graders, no server)
+if python3 tests/compare_c4.py --self-test >/dev/null 2>&1; then ok "compare_c4 self-test"; else bad "compare_c4 self-test"; fi
+if python3 tests/grade_ab_quality.py --self-test >/dev/null 2>&1; then ok "grade_ab_quality self-test"; else bad "grade_ab_quality self-test"; fi
 # needs jinja2; self-skips loudly if unavailable
 if python3 tests/test_chat_template.py >/dev/null 2>&1; then
     ok "test_chat_template"
@@ -55,7 +60,7 @@ fi
 MOCK_PORT_FILE="$(mktemp)"
 python3 ../tests/mock_openai_server.py --port 0 --port-file "$MOCK_PORT_FILE" &
 MOCK_PID=$!
-trap 'kill "$MOCK_PID" 2>/dev/null || true; rm -f "$MOCK_PORT_FILE"' EXIT
+trap '{ kill "$MOCK_PID" 2>/dev/null || true; wait "$MOCK_PID" 2>/dev/null || true; } 2>/dev/null; { kill "${BLANK_PID:-}" 2>/dev/null || true; wait "${BLANK_PID:-}" 2>/dev/null || true; } 2>/dev/null; rm -f "$MOCK_PORT_FILE" "$BLANK_PORT_FILE"' EXIT
 for _ in $(seq 1 20); do
     [ -s "$MOCK_PORT_FILE" ] && break
     sleep 0.2
@@ -77,6 +82,51 @@ if [ -s "$MOCK_PORT_FILE" ]; then
     else
         ok "bench_prefix_cache clean failure path"
     fi
+
+    # 6b. tool-call soak against the mock (issue #10 mitigation rehearsal)
+    if python3 tests/soak_tool_calls.py --base-url "http://127.0.0.1:${MOCK_PORT}/v1" \
+        --model glm-5.3-flash-nvfp4 --agents 3 --turns 4 --filler-words 50 \
+        --out "$TMP_OUT/soak-clean.json" >/dev/null 2>&1 \
+        && python3 - "$TMP_OUT/soak-clean.json" <<-'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["turns_ok"] == 12 and d["blank_arg_events"] == 0
+PY
+    then
+        ok "soak_tool_calls validation (clean mock, 3×4 concurrent turns)"
+    else
+        bad "soak_tool_calls validation"
+    fi
+
+    # 6c. blank-args injection: client retry must recover every turn. One
+    # agent keeps the counter parity deterministic under interleaving.
+    BLANK_PORT_FILE="$(mktemp)"
+    python3 ../tests/mock_openai_server.py --port 0 --port-file "$BLANK_PORT_FILE" \
+        --blank-tool-args-every 2 &
+    BLANK_PID=$!
+    for _ in $(seq 1 20); do [ -s "$BLANK_PORT_FILE" ] && break; sleep 0.2; done
+    if [ -s "$BLANK_PORT_FILE" ]; then
+        BLANK_PORT="$(cat "$BLANK_PORT_FILE")"
+        if python3 tests/soak_tool_calls.py --base-url "http://127.0.0.1:${BLANK_PORT}/v1" \
+            --model glm-5.3-flash-nvfp4 --agents 1 --turns 4 --filler-words 50 \
+            --retries 2 --out "$TMP_OUT/soak-blank.json" >/dev/null 2>&1 \
+            && python3 - "$TMP_OUT/soak-blank.json" <<-'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["blank_arg_events"] == 3 and d["recovered_after_retry"] == 3
+assert d["turns_ok"] == 4 and d["invalid_args_unrecovered"] == 0
+PY
+        then
+            ok "soak_tool_calls retry path (blank args injected, all recovered)"
+        else
+            bad "soak_tool_calls retry path"
+        fi
+        { kill "$BLANK_PID" 2>/dev/null || true; wait "$BLANK_PID" 2>/dev/null || true; } 2>/dev/null
+    else
+        bad "blank-args mock did not start"
+    fi
+    rm -f "$BLANK_PORT_FILE"
+
     rm -rf "$TMP_OUT"
 else
     bad "mock server did not start"
