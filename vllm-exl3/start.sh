@@ -160,6 +160,7 @@ SCHED_PATCH_HOST="${SCHED_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_scheduler_decode
 DRAFTER_PATCH_HOST="${DRAFTER_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_glm5_drafter_group.py}"
 APC_PATCH_HOST="${APC_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_hybrid_prefix_hit.py}"
 XGRAMMAR_PATCH_HOST="${XGRAMMAR_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_xgrammar_termination.py}"
+CACHE_RESET_PATCH_HOST="${CACHE_RESET_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_cache_reset.py}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
 QUANTIZATION="${QUANTIZATION:-exl3}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
@@ -201,6 +202,19 @@ VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS="${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800}"
 # 1 = after /health, burn DFlash2 BLOCK / sampler / kpool shapes. Nonfatal.
 GLM53_BOOT_SHAPE_WARMUP="${GLM53_BOOT_SHAPE_WARMUP:-1}"
 GLM53_WARMUP_REQ_TIMEOUT="${GLM53_WARMUP_REQ_TIMEOUT:-240}"
+# 1 = mount ONLY the cache-reset dev routes (/reset_prefix_cache, /reset_mm_cache,
+# /reset_encoder_cache — issue #31) on the head API server, so cold bench runs
+# can reset the prefix cache without a restart. The rest of the dev surface
+# (sleep / rlhf / rpc / server_info) stays off. Caveat: root-mounted routes are
+# outside the bearer guard (GUARDED_PREFIX), so set 0 on shared kits. Restart
+# applies it; the patch itself is inert when 0 (stock image behavior).
+GLM53_EXPOSE_CACHE_RESET="${GLM53_EXPOSE_CACHE_RESET:-1}"
+
+# OpenAI-compatible API bearer token. Read the native VLLM_API_KEY env var
+# (vLLM falls back to it when --api-key is absent on the CLI), so the key
+# never lands in argv / `non-default args` startup log. Empty = no auth.
+# Same single-key semantics as the DeepSeek V4 Flash DSpark deployment.
+VLLM_API_KEY="${VLLM_API_KEY:-}"
 
 CONTAINER_HEAD="${CONTAINER_HEAD:-glm53-exl3-head}"
 CONTAINER_WORKER="${CONTAINER_WORKER:-glm53-exl3-worker}"
@@ -358,6 +372,7 @@ preflight() {
     [ -f "$DRAFTER_PATCH_HOST" ] || die "$DRAFTER_PATCH_HOST missing"
     [ -f "$APC_PATCH_HOST" ] || die "$APC_PATCH_HOST missing"
     [ -f "$XGRAMMAR_PATCH_HOST" ] || die "$XGRAMMAR_PATCH_HOST missing"
+    [ -f "$CACHE_RESET_PATCH_HOST" ] || die "$CACHE_RESET_PATCH_HOST missing"
 
     local need_kb=$((180 * 1024 * 1024)) avail
     mkdir -p "$HF_CACHE_DIR"
@@ -579,7 +594,7 @@ adopt_complete_weights() {
 }
 
 # Resolve the HF CLI even when it lives outside PATH (venv installs), with a
-# python huggingface_hub fallback when no binary exists (upstream issue #22).
+# python huggingface_hub fallback when no binary exists (issue #22, item 1).
 # Sets the global HF_BIN_CMD array. HF_BIN (may contain arguments) wins when
 # its first word resolves. Returns 1 when nothing usable is found.
 resolve_hf_bin() {
@@ -697,7 +712,7 @@ download_only() {
 # synced repo folder, so a MODEL / revision switch re-syncs automatically.
 # Without it, every ./start.sh pays a full size+mtime re-verification walk
 # over ~164 GiB / 120 shards on both ends for zero bytes of difference
-# (upstream issue #22). FORCE_SYNC=1 bypasses the marker; deleting the
+# (issue #22, item 2). FORCE_SYNC=1 bypasses the marker; deleting the
 # marker file on the worker has the same effect.
 sync_repo_marker_rev() {
     local src="$1"
@@ -814,6 +829,9 @@ fi
 if [ -f /opt/glm53/patch_xgrammar_termination.py ]; then
     python3 /opt/glm53/patch_xgrammar_termination.py
 fi
+if [ -f /opt/glm53/patch_cache_reset.py ]; then
+    python3 /opt/glm53/patch_cache_reset.py
+fi
 say "launching: vllm serve ${MODEL_DIR} ${ARGS[*]}"
 exec vllm serve "${MODEL_DIR}" "${ARGS[@]}"
 EOF
@@ -893,6 +911,9 @@ fi
 if [ -f /opt/glm53/patch_xgrammar_termination.py ]; then
     python3 /opt/glm53/patch_xgrammar_termination.py
 fi
+if [ -f /opt/glm53/patch_cache_reset.py ]; then
+    python3 /opt/glm53/patch_cache_reset.py
+fi
 say "joining TP2 at ${HEAD_IP}:${MASTER_PORT} as rank 1"
 exec vllm serve "${MODEL_DIR}" "${ARGS[@]}"
 EOF
@@ -921,6 +942,8 @@ launch_cluster() {
     scp -q -o BatchMode=yes "$APC_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_hybrid_prefix_hit.py"
     [ -f "$XGRAMMAR_PATCH_HOST" ] || die "missing $XGRAMMAR_PATCH_HOST"
     scp -q -o BatchMode=yes "$XGRAMMAR_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_xgrammar_termination.py"
+    [ -f "$CACHE_RESET_PATCH_HOST" ] || die "missing $CACHE_RESET_PATCH_HOST"
+    scp -q -o BatchMode=yes "$CACHE_RESET_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_cache_reset.py"
 
     local -a nccl_common=(
         -e NCCL_IB_DISABLE=0
@@ -940,6 +963,9 @@ launch_cluster() {
         -e VLLM_CACHE_ROOT=/root/.cache/vllm
         -e "GLM53_SUPPRESS_STOPS_IN_REASONING=$GLM53_SUPPRESS_STOPS_IN_REASONING"
         -e "GLM53_MIXED_PREFILL_CHUNK=$GLM53_MIXED_PREFILL_CHUNK"
+        # Read by the patched build_app (issue #31): mount only the cache-reset
+        # dev routes when 1. Patched file is inert when 0/unset.
+        -e "GLM53_EXPOSE_CACHE_RESET=$GLM53_EXPOSE_CACHE_RESET"
         -e "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         -e "TILELANG_CACHE_DIR=$TILELANG_CACHE_DIR"
         -e "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=$VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"
@@ -986,6 +1012,12 @@ launch_cluster() {
              LIMIT_MM CHAT_TEMPLATE ENFORCE_EAGER EXL3_FUSED_MOE MODEL_DIR EXTRA_ARGS; do
         serve_env+=" -e $v='${!v:-}'"
     done
+    # VLLM_API_KEY is read by the head (rank 0) API server for bearer auth; the
+    # worker runs --headless so it only needs the var for argv-parity, and
+    # start.sh below passes it explicitly on the head. Keep it out of the
+    # generic loop so the key never shows in process listings of either node
+    # beyond the container env (same as the DeepSeek deployment).
+    serve_env+=" -e VLLM_API_KEY='${VLLM_API_KEY:-}'"
 
     log "starting worker on ${WORKER_SSH} (NCCL if=${WORKER_CX7_IF} hca=${WORKER_CX7_IB}) ..."
     worker_ssh "docker run -d --name '$CONTAINER_WORKER' \
@@ -1004,13 +1036,14 @@ launch_cluster() {
         -v '/tmp/patch_glm5_drafter_group.py:/opt/glm53/patch_glm5_drafter_group.py:ro' \
         -v '/tmp/patch_hybrid_prefix_hit.py:/opt/glm53/patch_hybrid_prefix_hit.py:ro' \
         -v '/tmp/patch_xgrammar_termination.py:/opt/glm53/patch_xgrammar_termination.py:ro' \
+        -v '/tmp/patch_cache_reset.py:/opt/glm53/patch_cache_reset.py:ro' \
         ${worker_preload} \
         ${worker_nccl} \
-        -e NCCL_IB_GID_INDEX='$WORKER_GID' \
         -e NCCL_SOCKET_IFNAME='$WORKER_CX7_IF' \
         -e GLOO_SOCKET_IFNAME='$WORKER_CX7_IF' \
         -e NCCL_IB_HCA='$WORKER_CX7_IB' \
         -e VLLM_HOST_IP='$WORKER_IP' \
+        -e NCCL_IB_GID_INDEX='$WORKER_GID' \
         ${serve_env} \
         --entrypoint bash '$IMAGE' /start.sh" >/dev/null
 
@@ -1031,6 +1064,7 @@ launch_cluster() {
         -v "$DRAFTER_PATCH_HOST:/opt/glm53/patch_glm5_drafter_group.py:ro" \
         -v "$APC_PATCH_HOST:/opt/glm53/patch_hybrid_prefix_hit.py:ro" \
         -v "$XGRAMMAR_PATCH_HOST:/opt/glm53/patch_xgrammar_termination.py:ro" \
+        -v "$CACHE_RESET_PATCH_HOST:/opt/glm53/patch_cache_reset.py:ro" \
         "${head_preload[@]}" \
         "${nccl_common[@]}" \
         -e "NCCL_IB_GID_INDEX=$HEAD_GID" \
@@ -1057,6 +1091,7 @@ launch_cluster() {
         -e ENFORCE_EAGER="$ENFORCE_EAGER" \
         -e EXL3_FUSED_MOE="$EXL3_FUSED_MOE" \
         -e MODEL_DIR="$MODEL_DIR" \
+        -e VLLM_API_KEY="$VLLM_API_KEY" \
         -e EXTRA_ARGS="${EXTRA_ARGS:-}" \
         --entrypoint bash "$IMAGE" /start.sh >/dev/null
 
@@ -1087,9 +1122,10 @@ wait_for_health() {
             exited=1; dead_side="head"; break
         fi
         # A dead worker rank can never make the head healthy — fail fast with
-        # the log dump instead of polling for the full READY_TIMEOUT (upstream
-        # issue #22). Transient ssh/docker hiccups are tolerated; only three
-        # consecutive non-running answers (30 s) count as a dead worker.
+        # the log dump instead of polling for the full READY_TIMEOUT (issue
+        # #22, item 4). Transient ssh/docker hiccups are tolerated; only
+        # three consecutive non-running answers (~30 s) count as a dead
+        # worker.
         if worker_ssh "docker inspect -f '{{.State.Running}}' '$CONTAINER_WORKER' 2>/dev/null" | grep -q true; then
             worker_fail=0
         else
@@ -1151,8 +1187,16 @@ on_ready() {
     [ "$SPEC_METHOD" = "dflash" ] && spec="DFlash2 k=${DFLASH_TOKENS} (${DFLASH_MODEL})"
     [ "$SPEC_METHOD" = "none" ] && spec=off
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}"
+    local auth_line="none (VLLM_API_KEY empty)"
+    if [ -n "${VLLM_API_KEY:-}" ]; then
+        auth_line="bearer token set (VLLM_API_KEY) — send Authorization: Bearer <key> on /v1 requests"
+    fi
+    log "  auth       : ${auth_line}"
     log "  quick test :"
     log "    curl -s http://127.0.0.1:${PORT}/v1/chat/completions \\"
+    if [ -n "${VLLM_API_KEY:-}" ]; then
+        log "      -H 'Authorization: Bearer <KEY>' \\"
+    fi
     log "      -H 'Content-Type: application/json' \\"
     log "      -d '{\"model\": \"${SERVED_MODEL_NAME}\", \"messages\": [{\"role\": \"user\", \"content\": \"hello!\"}]}'"
     log "  manage     : ./start.sh status | ./start.sh logs | ./start.sh logs worker | ./start.sh stop"
