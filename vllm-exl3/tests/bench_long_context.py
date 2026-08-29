@@ -247,6 +247,9 @@ def discover_tokenizer(
     candidates: list[tuple[str, Callable[[str], dict[str, Any]]]] = [
         (f"{base}/tokenize", lambda text: {"model": model, "prompt": text}),
         (f"{base}/tokenize", lambda text: {"model": model, "input": text}),
+        # vLLM mounts /tokenize at the root and validates `prompt` (or
+        # `messages`), not `text` — observed 400 on the glm53-flash image.
+        (f"{root}/tokenize", lambda text: {"model": model, "prompt": text}),
         (f"{root}/tokenize", lambda text: {"text": text}),
         (f"{root}/tokenize", lambda text: {"model": model, "text": text}),
     ]

@@ -209,15 +209,26 @@ def run_pair(base_url: str, model: str, api_key: str, chat_index: int,
     if reset:
         reset_endpoint = reset_prefix_cache(base_url, api_key, timeout)
 
+    # Instrument BOTH turns: the cold-turn delta exposes whether the cold
+    # prefill genuinely ran (hits ~ 0) or reused pages (hits > 0 despite a
+    # unique-content prompt + reset) — that distinction settled a 5x
+    # cold-TTFT swing observed between bench sessions on 2026-08-29.
+    hits_pre_cold, queries_pre_cold = _metrics_prefix_cache(base_url, api_key, timeout)
+
     cold = _chat_once(base_url, model, api_key, messages, timeout)
     if not cold.get("ok"):
         return {"chat": chat_index, "cold": cold, "ok": False, "reset": reset_endpoint}
 
-    # Snapshot AFTER the cold turn: the delta must span the warm turn only.
-    # A window covering cold+warm divides total hits by total queries of both
-    # turns and halves the apparent ratio (v1/v2.0 instrumentation bug — the
-    # stack itself was hitting every full page all along).
-    hits_before, queries_before = _metrics_prefix_cache(base_url, api_key, timeout)
+    hits_pre_warm, queries_pre_warm = _metrics_prefix_cache(base_url, api_key, timeout)
+    cold_metrics: dict | None = None
+    if None not in (hits_pre_cold, hits_pre_warm, queries_pre_cold, queries_pre_warm):
+        d_hits = hits_pre_warm - hits_pre_cold
+        d_queries = queries_pre_warm - queries_pre_cold
+        if d_queries > 0:
+            cold_metrics = {
+                "hit_ratio": round(d_hits / d_queries, 4),
+                "queries": d_queries,
+            }
 
     assistant_reply = ((cold.get("text_head") or "").strip()) or f"The document requires {code}."
     warm_messages = messages + [
@@ -228,9 +239,9 @@ def run_pair(base_url: str, model: str, api_key: str, chat_index: int,
 
     hits_after, queries_after = _metrics_prefix_cache(base_url, api_key, timeout)
     hit_ratio = None
-    if None not in (hits_before, hits_after, queries_before, queries_after):
-        d_hits = hits_after - hits_before
-        d_queries = queries_after - queries_before
+    if None not in (hits_pre_warm, hits_after, queries_pre_warm, queries_after):
+        d_hits = hits_after - hits_pre_warm
+        d_queries = queries_after - queries_pre_warm
         if d_queries > 0:
             hit_ratio = round(d_hits / d_queries, 4)
 
@@ -252,6 +263,7 @@ def run_pair(base_url: str, model: str, api_key: str, chat_index: int,
         "reset": reset_endpoint,
         "cold": cold,
         "warm": warm,
+        "cold_metrics": cold_metrics,
         "warm_ttft_s": warm_ttft,
         "cold_ttft_s": cold_ttft,
         "speedup": speedup,
@@ -319,6 +331,7 @@ def main() -> int:
                   f"cold={r.get('cold_ttft_s')}s warm={r.get('warm_ttft_s')}s "
                   f"speedup={r.get('speedup')} hit={r.get('prefix_hit_ratio')} "
                   f"eff={r.get('hit_efficiency')} "
+                  f"coldhit={(r.get('cold_metrics') or {}).get('hit_ratio')} "
                   f"prompt_tokens={r.get('cold', {}).get('prompt_tokens')}"
                   + ("" if r.get("ok") else f"  FAILED http={r.get('cold', {}).get('http')}"))
         time.sleep(0.5)
