@@ -9,7 +9,8 @@ for file in ./*.sh ./scripts/*.sh ./tests/*.sh ./tests/mock-start-bin/*; do
 done
 
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
-  tests/test_validate_checkpoint.py tests/test_bench_long_context.py
+  tests/test_validate_checkpoint.py tests/test_bench_long_context.py \
+  tests/test_bench_power.py
 
 for profile in 32k 32k-batch4 32k-batch8 64k 128k 128k-batch4 128k-batch4-mtp 128k-batch4-mtp3 128k-batch2-mtp 128k-batch4-8k 128k-batch8 128k-ep1 128k-mtp-ep1 128k-mtp-compile 128k-dflash2 128k-dflash2-c4 128k-dflash2-c8 128k-dflash2-flashinfer 256k 256k-graphs 256k-mtp 256k-dflash2-eager 384k-quality 512k-mtp-eager 512k-mtp-cp 32k-mtp 32k-eager; do
   GLM53_ENV_FILE=tests/fixtures/valid.env scripts/validate-env.sh "$profile" >/dev/null

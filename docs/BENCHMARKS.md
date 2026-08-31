@@ -1,11 +1,30 @@
-# Historique des benchmarks
+# Historique des benchmarks — source unique des deux lanes
 
-Mesures de débit relevées sur cluster réel (2× GB10, TP=2, RoCE). Les artefacts
-JSON bruts restent dans `results/` (ignoré par Git) ; ce tableau en conserve
-l'essentiel pour suivre les régressions et les gains de chaque levier.
+Ce fichier est **la seule source de vérité** pour les mesures du cluster
+(2× GB10, TP=2, RoCE) : la lane SGLang/NVFP4 (défaut) et la lane EXL3/vLLM
+(branche `dev`). Aucun autre fichier du dépôt ne doit porter des chiffres de
+bench : les docs de lane renvoient ici.
+
+Les artefacts JSON bruts restent dans `results/` (racine) ou `vllm-exl3/results/`
+(lane EXL3) — ignorés par Git ; ce journal en conserve l'essentiel avec le nom
+du fichier pour suivre régressions et gains.
+
+Règles communes aux deux lanes (culture benchmark du repo + kit vendoré) :
+
+- noter le protocole avec chaque nombre : classe de prompt, runs, tokens,
+  température, thinking on/off ;
+- les nombres upstream notent **leur kit** : ce sont les baselines à battre ou
+  reproduire, pas un claim sur le nôtre ;
+- une ligne pour un kit n'est valide qu'avec son artefact JSON (garder le nom
+  du fichier dans la ligne) ;
+- ne jamais citer un tok/s structured sans le tok/s prose à côté (régimes
+  d'acceptation ~2,8×, voir [EXL3-QUALITY.md](EXL3-QUALITY.md)).
 
 Pour contribuer une ligne : `./bench-glm53.py --runs 3 --concurrency N`, puis
-recopiez le résumé médian dans le tableau en précisant le profil et la date.
+recopiez le résumé médian dans le tableau de la lane concernée en précisant le
+profil et la date.
+
+## Lane SGLang / NVFP4 (lane par défaut)
 
 | Date | Profil | Bench | Succès | TTFT méd. | TTFT p99 | Décode méd. | Agrégé | Notes | Artefact |
 |---|---|---|---|---:|---:|---:|---:|---|---|
@@ -150,6 +169,59 @@ recopiez le résumé médian dans le tableau en précisant le profil et la date.
   produit un premier token. Cette capacité reste « non mesurée » tant que le
   protocole ci-dessous n'a pas réussi.
 
+## Consommation électrique — balayage C1→C8 (2026-08-31)
+
+Premières mesures de puissance du cluster, via `bench-power.py` (protocole
+dans [POWER.md](POWER.md)) : nœud **head** (`thinkstationpgx-2ff1`, GB10,
+driver 580.159.03), profil `128k-dflash2-c8`, échantillonnage 0,5 s sur
+`power.draw.average`, intégration trapézoïdale (compteur d'énergie NVML non
+supporté par ce driver). Le worker n'a pas été échantillonné dans cette
+passe : les Wh ci-dessous couvrent le GPU du head uniquement. L'« excès »
+retire la baseline idle (GPU chargé, à vide) mesurée avant/après chaque run.
+
+| Date | Profil | Test | C | Agrégé | GPU mean | GPU pic | Énergie bench | Excès vs idle | J/token (excès) | Artefact |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-31 | `128k-dflash2-c8` | idle watch 60 s (modèle chargé) | — | — | 9,8 W | 10,0 W | 0,163 Wh | — | — | `glm53-power-idle-128k-dflash2-c8-20260831-083822.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (essai C6 isolé) | 6 | 80,5 tok/s | 35,9 W | 40,0 W | 0,63 Wh | 0,43 Wh | 0,32 | `glm53-power-c6-20260831-083931.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 1 | 35,4 tok/s | 33,8 W | 37,5 W | 1,27 Wh | 0,81 Wh | 0,61 | `glm53-power-c1-20260831-084139.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 2 | 49,4 tok/s | 34,5 W | 37,7 W | 0,93 Wh | 0,59 Wh | 0,45 | `glm53-power-c2-20260831-084414.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 4 | 72,1 tok/s | 35,5 W | 40,0 W | 0,66 Wh | 0,42 Wh | 0,32 | `glm53-power-c4-20260831-084612.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 5 | 78,4 tok/s | 38,0 W | 42,0 W | 0,66 Wh | 0,43 Wh | 0,33 | `glm53-power-c5-20260831-084739.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 6 | 80,5 tok/s | 37,9 W | 42,9 W | 0,65 Wh | 0,43 Wh | 0,32 | `glm53-power-c6-20260831-084902.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 7 | 83,1 tok/s | 38,0 W | 41,4 W | 0,63 Wh | 0,42 Wh | 0,32 | `glm53-power-c7-20260831-085023.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 8 | 78,2 tok/s | 37,7 W | 41,5 W | 0,66 Wh | 0,43 Wh | 0,33 | `glm53-power-c8-20260831-085142.json` |
+
+### Lecture des mesures de puissance du 2026-08-31
+
+- **Le GB10 consomme très peu et surtout très constant.** Idle GPU chargé :
+  10–13 W selon la phase ; sous charge : 34–38 W en moyenne, pics ≤ 43 W,
+  utilisation 94–95 %, horloges SM stables ~2 500 MHz, 60–68 °C — aucun signe
+  de throttling thermique. Le décode d'un 320B NVFP4 est memory-bound : le
+  batching « remplit » les mêmes passes mémoire au lieu d'en ajouter.
+- **La puissance ne suit pas le débit, l'efficacité si.** De C1 à C7, la
+  puissance moyenne ne monte que de ~12 % (33,8 → 38,0 W) quand le débit
+  agrégé fait ×2,3 (35,4 → 83,1 tok/s) : le coût énergétique par token
+  généré est ainsi divisé par ~1,9 (0,61 → 0,32 J/token en excès, soit
+  ~0,09 mWh/token à C4+). Le point d'exploitation C6–C7 est aussi le plus
+  efficient énergétiquement — pas d'arbitrage débit/énergie sur ce profil.
+- **Batcher divise l'énergie du bench par ~2.** Le même travail (~4 750
+  tokens, 9 requêtes) coûte 1,27 Wh à C1 contre 0,63–0,66 Wh à C4+,
+  cohérent avec le wall clock (134 s → 60 s). En continu à C6, le décode ne
+  coûte que ~0,9 kWh/jour côté GPU, plus ~0,3 kWh/jour d'idle (par nœud).
+- **Reproductibilité correcte.** Deux C6 consécutifs : 2,27 vs 2,34 kJ
+  (±1,5 %) pour le même travail ; baseline idle 11,3–13,0 W selon que la
+  phase précède ou suit une charge (le power management relève légèrement
+  l'idle juste après). Zéro échantillon perdu sur les 8 runs, aucun trou
+  d'échantillonnage > 0,54 s.
+- **Cohérence avec le balayage perf du 28/08** : agrégés du jour 35,4 (C1)
+  → 80,5 (C6) → 83,1 (C7) → 78,2 (C8). Le sommet exact se déplace d'un cran
+  dans le bruit inter-run (±4 %, 86,0 à C6 le 28/08) ; le plateau C4–C8 et
+  la régression au-delà se confirment.
+- **Périmètre et limites** : puissance **carte GPU uniquement** (un GB10 par
+  nœud) — la prise murale ajoutera CPU Grace, DRAM, NICs et pertes
+  d'alimentation ; à utiliser pour **comparer** les profils entre eux, pas
+  pour une facture. `power_limit_w` n'est pas exposé par ce driver.
+
 ## Matrice de capacité long-contexte
 
 Le checkpoint est nativement configuré pour 1 048 576 tokens, mais la fenêtre
@@ -193,3 +265,104 @@ Le succès `256k` tranche aussi la question du chunk sur cette recette : 1024 a
 fonctionné avec SGLang à 240 008 tokens. Le segfault sous 2048 rapporté par le
 port DFlash2 concernait sa voie vLLM patchée ; ce n'est pas un plancher général
 du modèle et il ne doit pas remplacer la preuve obtenue sur le runtime présent.
+
+## Lane EXL3 / vLLM (branche `dev`) — 2× GB10, TP=2, RoCE, ThinkStation PGX, 2026-08-29
+
+Chemin de service = celui d'amont, à l'octet près (image tirée, aucune
+modification de source) ; durcissement côté hôte uniquement. Données terrain
+aussi remontées en amont : issue MiaAI-Lab #32. Les protocoles se lancent
+depuis `vllm-exl3/` ; les artefacts vivent dans `vllm-exl3/results/`.
+
+### Baseline amont (kit MiaAI-Lab, 2026-08-28, DFlash2 k=7, temp 0, thinking off, 400 tok, CUDA graphs)
+
+Décode, protocole sparkDash — Structured = count 1→200 (forte acceptation),
+Code = prompts clamp. Le tok/s stream est par requête ; l'agrégé compte tous
+les flux.
+
+| Concurrence | TTFT | Stream tok/s | Agrégé tok/s |
+|---:|---:|---:|---:|
+| ×1 | 719 ms | 62.9 (structured) | 62.9 |
+| ×2 | 6,62 s | 51.7 | 103.3 |
+| ×4 | 6,30 s | 37.1 | 146.5 |
+
+`tests/bench_decode.py` du lab, même protocole, médiane de 5 × 400, C1 :
+structured **61.7** tok/s (accept 0.918 / 6.43 par pas) ; prose **26.9**
+(0.332 / 2.33). Long contexte / mixte (~60–100k KV) 24–27. Baseline MTP k=2
+~24.6.
+
+Prefix caching (service 1M, vrai user + assistant + follow-up) :
+
+| Tour | Hits | Prompt tok | TTFT |
+|---|---:|---:|---:|
+| ~7,7k froid | 0 | 7696 | 9,7 s |
+| ~7,7k follow-up | 7168 (93 %) | 7717 | **1,17 s** |
+| ~12k follow-up | 10752 | 12015 | 1,94 s |
+| ~16k follow-up | 14336 | 16015 | 2,18 s |
+| 4× ~7,5k follow-ups concurrents | 7168 chacun | 7515 chacun | 1,86–2,50 s |
+
+Capacité de contexte : `max_model_len` 1M avec pool 1 754 237 tokens (1,75×) à
+util 0.87 ; ~256k ×3 concurrents tenus en live (29,5 % de KV au pic).
+
+### Ce kit (2026-08-29)
+
+| Date | Protocole | Résultat | Notes | Artefact |
+|---|---|---|---|---|
+| 2026-08-29 | `bench_decode.py --phase structured --structured --runs 5 --max-tokens 400` | **66.7 tok/s** médian (63.3–68.6), TTFT 0.46 s, accept 0.959 / 6.71 par pas | **au-dessus de la baseline amont** (61.7 lab / 62.9 sparkDash, accept 0.918) ; par position 1.0/1.0/1.0/0.98/0.97/0.90/0.89 — pas d'effondrement tardif, chemin d'attention du drafter sain. Chemin de service identique : l'écart vient de la variance kit + de l'échantillonnage probabiliste du draft, pas de nos changements | `/tmp/exl3-structured.json` |
+| 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s médian (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | dans la bande amont (26.9 lab / 27.1 second kit) ; la forme par position colle à la signature DFlash2 — l'asymétrie ~2.6× structured/prose est le caractère connu du drafter | `/tmp/exl3-prose.json` |
+| 2026-08-29 | `bench_prefix_cache.py` v2.1+ (`--prompt-tokens 8400`) | **hit 0.8541, eff 0.9999** — chaque page 3584 complète du prompt chaud réutilisée ; TTFT chaud 2.5 s vs 10.3 s vrai froid (**4.1×**) | modèle de pages confirmé : les hits sont alignés sur la **page hybride MLA de 3584 tokens** (`floor(tokens/3584)×3584`), et 7168 = 2×3584 exactement. Les bizarreries v1/v2.0 venaient de l'instrumentation du bench, pas de la stack : une fenêtre métriques couvrant froid+chaud divise le ratio par deux, et la réutilisation de contenu entre sessions fabrique de faux froids car l'image n'a **pas d'endpoint de reset du cache** (documenté en amont, issue #31 ; corrigé côté client par le sel de session) | `vllm-exl3/results/glm53-exl3-prefix-cache-*.json` |
+| 2026-08-29 | `./bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, agrégé **54.8 tok/s**, TTFT médian 1.61 s, **p99 16.7 s** | escalier de TTFT conforme à `GLM53_MIXED_PREFILL_CHUNK=skip` : les nouveaux prefills attendent qu'un décode se vide (coding r2 TTFT 9.54 s ≈ total coding r1 9.50 s). Tradeoff amont connu (schéma issue #19) ; adoucisseur candidat `GLM53_MIXED_PREFILL_CHUNK=256` | `vllm-exl3/results/glm53-benchmark-20260829-115750.json` |
+| 2026-08-29 | `…` (skip, re-mesure après ajout de `wall_seconds` au bench) | 9/9 ok, agrégé **50.0 tok/s** (wall exact 37.1 s), TTFT médian 2.60 s, **p99 14.79 s** | escalier reproduit (TTFT 0.83 → 2.6 → 8.6 → 9.2 → 14.8 : prefills en file derrière les décodes) ; remplace la mesure de 11h57 dont le wall manquait — le fallback `max(total_seconds)` du comparateur surestimait l'agrégé (72.1 tok/s estimés) et avait faussé une première comparaison | `vllm-exl3/results/glm53-benchmark-c4-chunkskip-20260829-173451.json` |
+| 2026-08-29 | `c4-chunk-ab.sh --no-restart` sous `GLM53_MIXED_PREFILL_CHUNK=256` (même protocole C4) | 9/9 ok, agrégé **64.3 tok/s** (wall 30.7 s), TTFT médian 0.85 s, **p99 1.22 s** — verdict **PASS** : p99 ratio 0.083 (≤ 0.75), agrégé ratio 1.288 (≥ 0.95) | p99 TTFT **÷12** (14.8 → 1.2 s) et agrégé **+29 %** vs skip : le plafond mixte 256 élimine l'escalier sans rendre le goodput ; politique scheduler par défaut de la lane → **256** | `vllm-exl3/results/glm53-benchmark-c4-chunk256-20260829-173038.json` |
+| 2026-08-29 | A/B qualité : `bench-glm53.py --prompts tests/ab_quality_prompts.jsonl --runs 1 --thinking on --save-content` (budgets ×6 identiques, temp 0) vs OpenRouter `z-ai/glm-5.3-flash` | **PASS RATE 4/4 = 4/4** (grader exécutable : 2 tâches code contre tests unitaires, 2 tâches JSON structurelles) ; `release_config` **bit-identique** (sha256 égal des deux côtés) | confirmation bout en bout de l'argument KLD (0.0246, EXL3-QUALITY.md) : le 4bpw passe les mêmes tests que la référence. Caveats : le côté référence est OpenRouter **provider Modal** (pas z.ai direct) et son reasoning est obligatoire (400 « Reasoning is mandatory… ») → thinking forcé des deux côtés ; 1 run/tâche. Ne pas citer les tok/s decode de ce run : en thinking le TTFT inclut le raisonnement, métrique non comparable aux rows DFlash2 | `vllm-exl3/results/ab-quality-20260829-233715.json` |
+| 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok, 3/3 aiguilles (sha256 exact), API saine** — 200 005 tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse 40 tokens, petit échantillon) | pool 1.75M → 200k ≈ 11 %. Pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid | `vllm-exl3/results/glm53-long-context-long-context-20260829-122213.json` |
+| 2026-08-29 | `… --target-tokens 500000 --cold --label 500k-cold` | **ok, 3/3 aiguilles, API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages des runs précédents encore résidentes ; −4 % de prefill vs 200k | `vllm-exl3/results/glm53-long-context-500k-cold-20260829-123606.json` |
+| 2026-08-29 | `… --target-tokens 900000 --cold --label 900k-cold` | **ok, 3/3 aiguilles, API saine — 900 007 tokens froids** | TTFT 1138.4 s, prefill 790.6 tok/s ; 1.6M de pages cumulées résidentes dans le pool 1.75M | `vllm-exl3/results/glm53-long-context-900k-cold-20260829-125558.json` |
+| 2026-08-29 | `… --target-tokens 990000 --cold --label 990k-cold` (après redémarrage) | **ok, 3/3 aiguilles, API saine — 990 007 tokens : la fenêtre 1M complète validée à froid** | TTFT 1231.9 s, prefill 803.6 tok/s (boot neuf, cache vide) ; `decode=null` = le garde de fenêtre minimale a correctement rejeté l'échantillon 40 tokens | `vllm-exl3/results/glm53-long-context-990k-cold-20260829-133322.json` |
+
+Prefill le long de la rampe : 871 → 836 → 791 → 804 tok/s — quasi plat (pire
+cas −9 %), la signature sparse-MLA.
+
+### Checklist de promotion EXL3
+
+Reprise du protocole DFlash2 de la lane sœur, plus les items propres à la
+lane. **Le flip du défaut repo (ordre du README, merge `main`) n'arrive que
+quand chaque case est cochée** ; d'ici là cette lane est le choix documenté
+pour le long contexte et la fidélité de poids, et SGLang reste le défaut pour
+les agents en rafales.
+
+- zéro crash/retract pendant le balayage ; structured et prose relevés ;
+  acceptation par position saine (pas d'effondrement tardif) ✅ 2026-08-29
+- long contexte froid 3/3 aiguilles avec API saine après ✅ 2026-08-29
+  (200k / 500k / 900k / 990k)
+- réutilisation prefix-cache au voisinage du modèle de pages (eff ≥ 0.9)
+  ✅ 2026-08-29
+- comparaison C4 `GLM53_MIXED_PREFILL_CHUNK=256` : p99 TTFT nettement sous le
+  p99 `skip` (16.7 s) sans rendre l'agrégé — décide de la politique scheduler
+  par défaut de la lane ✅ 2026-08-29
+  → verdict PASS (`tests/compare_c4.py`) : p99 14.79 → 1.22 s (ratio 0.083),
+  agrégé 50.0 → 64.3 tok/s (ratio 1.288). Défaut de la lane → **256**
+  (à poser dans `vllm-exl3/.env`, puis re-enregistrer les rows prefix-cache et
+  long-context sous la nouvelle politique). Rows journal : 29/08 ci-dessus.
+  → `vllm-exl3/scripts/c4-chunk-ab.sh` boote la politique candidate, rejoue le
+  protocole C4 identique et applique le verdict via `vllm-exl3/tests/compare_c4.py`
+  (p99 ≤ 0.75×, agrégé ≥ 0.95×). Ajouter la row ci-dessus après le run.
+- soak tool-calling sous charge concurrente : aucun argument requis vide
+  (issue amont #10 ouverte — validation + retry côté client d'ici là) ⬜
+  → `vllm-exl3/tests/soak_tool_calls.py --agents 8 --turns 16` avec prefills
+  froids concurrents (`--filler-words 8000`, `--salt` neuf à chaque run) ;
+  exit 0 avec uniquement des événements récupérés = pass, plus les comptes
+  bruts d'événements.
+- soak OpenCode multi-jours sur trafic agent réel, redémarrage inclus ⬜
+  → protocole + journal dans [EXL3-SOAK.md](EXL3-SOAK.md) (sonde quotidienne
+  `vllm-exl3/scripts/soak-day.sh`).
+- A/B qualité contre l'API officielle sur tâches de code/agent identiques
+  (l'argument KLD mérite une confirmation bout en bout) ✅ 2026-08-29
+  → PASS RATE **4/4 (EXL3 4bpw) = 4/4** (référence : OpenRouter
+  `z-ai/glm-5.3-flash`, provider Modal — son reasoning étant obligatoire,
+  thinking forcé des deux côtés, budgets ×6 identiques) ; `release_config`
+  bit-identique. Caveat assumé : référence via OpenRouter tant qu'aucune clé
+  z.ai directe — redo possible plus tard, row 29/08 ci-dessus.
+
+Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé et les
+deux soaks (la comparaison C4 et l'A/B qualité sont passés le 29/08, voir rows
+et checklist ci-dessus).

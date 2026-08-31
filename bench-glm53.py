@@ -69,6 +69,7 @@ class Result:
     decode_tokens_per_second: float | None
     content_sha256: str | None
     content_chars: int
+    content: str | None = None  # only with --save-content (A/B quality grading)
 
 
 def urlopen(request: urllib.request.Request, timeout: int):  # type: ignore[no-untyped-def]
@@ -108,6 +109,9 @@ def stream_once(
     prompt: dict[str, Any],
     run_number: int,
     timeout: int,
+    thinking: str = "default",
+    save_content: bool = False,
+    extra_body: dict[str, Any] | None = None,
 ) -> Result:
     payload = {
         "model": model,
@@ -117,6 +121,16 @@ def stream_once(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if thinking in ("on", "off"):
+        # GLM chat templates gate thinking via chat_template_kwargs. Lanes
+        # that default thinking ON burn small max_tokens budgets inside
+        # <think> and can stream no content deltas at all.
+        payload["chat_template_kwargs"] = {"enable_thinking": thinking == "on"}
+    if extra_body:
+        # Per-target body overrides — e.g. OpenRouter's unified reasoning
+        # switch, since chat_template_kwargs is vLLM-specific and ignored
+        # there. Applied last so it can override anything above.
+        payload.update(extra_body)
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
@@ -129,6 +143,7 @@ def stream_once(
     started = time.perf_counter()
     first_token_at: float | None = None
     content_parts: list[str] = []
+    finish_reason: str | None = None
     usage: dict[str, Any] = {}
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -144,6 +159,8 @@ def stream_once(
                     usage = event["usage"]
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
                     piece = delta.get("content") or ""
                     reasoning_piece = delta.get("reasoning_content") or ""
                     tool_piece = delta.get("tool_calls") or []
@@ -153,12 +170,25 @@ def stream_once(
                         content_parts.append(piece)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
         total = time.perf_counter() - started
+        error = str(exc)
+        if isinstance(exc, urllib.error.HTTPError):
+            try:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                detail = ""
+            if detail:
+                error += f" — {detail[:300]}"
+            if exc.code == 404:
+                error += (
+                    " — unknown route or model id on this server; check --model "
+                    "(and --compare-model) against GET /v1/models"
+                )
         return Result(
             target=target_name,
             prompt=prompt["name"],
             run=run_number,
             ok=False,
-            error=str(exc),
+            error=error,
             ttft_seconds=None,
             total_seconds=total,
             prompt_tokens=None,
@@ -187,7 +217,11 @@ def stream_once(
         prompt=prompt["name"],
         run=run_number,
         ok=first_token_at is not None,
-        error=None if first_token_at is not None else "stream contained no content/reasoning/tool delta",
+        error=None if first_token_at is not None else (
+            "stream contained no content/reasoning/tool delta"
+            + (f" (finish_reason={finish_reason})" if finish_reason else "")
+            + " — try --thinking off if the lane defaults thinking on"
+        ),
         ttft_seconds=ttft,
         total_seconds=finished - started,
         prompt_tokens=usage.get("prompt_tokens"),
@@ -195,21 +229,25 @@ def stream_once(
         decode_tokens_per_second=decode_rate,
         content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         content_chars=len(content),
+        content=content if save_content else None,
     )
 
 
 def add_target(
-    targets: list[tuple[str, str, str, str | None]],
+    targets: list[tuple[str, str, str, str | None, dict[str, Any] | None]],
     name: str,
     base_url: str | None,
     model: str | None,
     key_env: str | None,
+    extra_body: dict[str, Any] | None = None,
 ) -> None:
     if not base_url and not model:
         return
     if not base_url or not model:
         raise ValueError(f"{name}: base URL and model must be provided together")
-    targets.append((name, base_url, model, os.environ.get(key_env) if key_env else None))
+    targets.append(
+        (name, base_url, model, os.environ.get(key_env) if key_env else None, extra_body)
+    )
 
 
 def median(values: list[float]) -> float | None:
@@ -233,6 +271,15 @@ def main() -> int:
     parser.add_argument("--compare-base-url")
     parser.add_argument("--compare-model")
     parser.add_argument("--compare-api-key-env", default="ZAI_API_KEY")
+    parser.add_argument(
+        "--compare-extra-body",
+        type=json.loads,
+        default=None,
+        help="extra JSON body params for the compare target only, e.g. "
+             '\'{"reasoning": {"enabled": false}}\' to disable reasoning on '
+             "OpenRouter (chat_template_kwargs is vLLM-specific and is ignored "
+             "there). Applied after --thinking, so it can override it.",
+    )
     parser.add_argument("--prompts", type=Path)
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument(
@@ -248,6 +295,20 @@ def main() -> int:
         help="number of requests kept in flight per target (sub-agent simulation)",
     )
     parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument(
+        "--thinking",
+        choices=["default", "off", "on"],
+        default="default",
+        help="control enable_thinking via chat_template_kwargs. Use 'off' for "
+             "lanes whose chat template defaults thinking on (GLM vLLM lane), "
+             "otherwise small max_tokens budgets stream no content deltas.",
+    )
+    parser.add_argument(
+        "--save-content",
+        action="store_true",
+        help="store raw completions in the artifact (needed for the A/B "
+             "quality grader; large artifacts otherwise)",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -258,7 +319,7 @@ def main() -> int:
     if args.concurrency < 1 or args.concurrency > 64:
         parser.error("--concurrency must be between 1 and 64")
     prompts = load_prompts(args.prompts)
-    targets: list[tuple[str, str, str, str | None]] = []
+    targets: list[tuple[str, str, str, str | None, dict[str, Any] | None]] = []
     add_target(targets, "local", args.base_url, args.model, args.api_key_env)
     add_target(
         targets,
@@ -266,12 +327,13 @@ def main() -> int:
         args.compare_base_url,
         args.compare_model,
         args.compare_api_key_env,
+        args.compare_extra_body,
     )
 
     results: list[Result] = []
     warmup_results: list[Result] = []
     wall_seconds: dict[str, float] = {}
-    for target_name, base_url, model, api_key in targets:
+    for target_name, base_url, model, api_key, extra_body in targets:
         for warmup_number in range(1, args.warmup_runs + 1):
             prompt = prompts[(warmup_number - 1) % len(prompts)]
             print(
@@ -287,6 +349,9 @@ def main() -> int:
                 prompt=prompt,
                 run_number=0,
                 timeout=args.timeout,
+                thinking=args.thinking,
+                save_content=args.save_content,
+                extra_body=extra_body,
             )
             warmup_results.append(warmup)
             if not warmup.ok:
@@ -314,6 +379,9 @@ def main() -> int:
                         prompt=prompt,
                         run_number=run_number,
                         timeout=args.timeout,
+                        thinking=args.thinking,
+                        save_content=args.save_content,
+                        extra_body=extra_body,
                     )
                 )
         else:
@@ -333,6 +401,9 @@ def main() -> int:
                         prompt=prompt,
                         run_number=run_number,
                         timeout=args.timeout,
+                        thinking=args.thinking,
+                        save_content=args.save_content,
+                        extra_body=extra_body,
                     ): (prompt["name"], run_number)
                     for prompt, run_number in tasks
                 }
@@ -388,8 +459,10 @@ def main() -> int:
         "concurrency": args.concurrency,
         "warmup_runs": args.warmup_runs,
         "targets": [
-            {"name": name, "base_url": url, "model": model} for name, url, model, _ in targets
+            {"name": name, "base_url": url, "model": model, "extra_body": extra}
+            for name, url, model, _, extra in targets
         ],
+        "wall_seconds": wall_seconds,
         "results": [asdict(result) for result in results],
         "warmups_discarded": [asdict(result) for result in warmup_results],
     }

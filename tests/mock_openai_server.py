@@ -9,6 +9,10 @@ from pathlib import Path
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Every Nth tools request returns blank arguments (issue #10 rehearsal).
+    blank_tool_args_every = 0
+    _tool_call_count = 0
+
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
@@ -90,20 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(encoded)
             return
         if payload.get("tools"):
-            message = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "get_temperature",
-                            "arguments": json.dumps({"city": "Paris"}),
-                        },
-                    }
-                ],
-            }
+            message = self.tool_call_message(payload)
         else:
             message = {"role": "assistant", "content": "GLM53_OK"}
         self.send_json(
@@ -114,11 +105,55 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
+    @classmethod
+    def tool_call_message(cls, payload: dict) -> dict:
+        """First offered tool, required args filled from its own schema.
+
+        Legacy compatibility: smoke-glm53.sh asserts the get_temperature call
+        echoes the city it asked for, so that tool keeps `{"city": "Paris"}`.
+        Other tools get `mock_<key>` placeholders. With blank_tool_args_every
+        > 0, every Nth tools request comes back with `arguments: ""` so
+        clients can rehearse the issue-#10 mitigation (validation + retry).
+        """
+        tools = payload.get("tools") or []
+        name, required = "get_temperature", ["city"]
+        if tools:
+            fn = tools[0].get("function") or {}
+            name = fn.get("name") or name
+            params = fn.get("parameters") or {}
+            required = params.get("required") or list(params.get("properties") or {})[:1]
+        cls._tool_call_count += 1
+        if cls.blank_tool_args_every and cls._tool_call_count % cls.blank_tool_args_every == 0:
+            arguments = ""
+        elif name == "get_temperature" and required == ["city"]:
+            arguments = json.dumps({"city": "Paris"})
+        else:
+            arguments = json.dumps({key: f"mock_{key}" for key in required})
+        return {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": f"call_{cls._tool_call_count}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                }
+            ],
+        }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--port-file", type=Path, required=True)
+    parser.add_argument(
+        "--blank-tool-args-every",
+        type=int,
+        default=0,
+        help="every Nth tools request returns blank arguments (0 = off)",
+    )
     args = parser.parse_args()
+    Handler.blank_tool_args_every = args.blank_tool_args_every
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     args.port_file.write_text(str(server.server_port), encoding="utf-8")
     server.serve_forever()

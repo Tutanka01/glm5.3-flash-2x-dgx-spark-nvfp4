@@ -502,6 +502,95 @@ export ZAI_API_KEY='...'
 
 Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de qualité sérieuse doit conserver les mêmes prompts, températures, budgets de tokens et tâches agentiques des deux côtés. Les mesures marquantes sont archivées dans [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+Pour mesurer la **consommation électrique** d'un bench (watts, énergie,
+baseline idle), enveloppez-le avec
+[`bench-power.py`](docs/POWER.md) :
+
+```bash
+./bench-power.py --label c6 -- python3 bench-glm53.py --runs 3 --concurrency 6
+```
+
+## Lane EXL3/vLLM (branche `dev`, répertoire `vllm-exl3/`)
+
+Seconde lane produit : les poids **EXL3/TR3 4bpw** servis par **vLLM** via la
+recette [MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)
+(MIT), vendorée puis durcie. **Validée sur le cluster le 2026-08-29** :
+990 007 tokens froids validés au needle-exact (fenêtre 1M complète),
+66.7 tok/s structured à l'acceptation 0.959, prefix-cache 4.1× sur les
+follow-ups, poids ≈ FP8 officiel (KLD 0.0246 contre 0.0605 pour le NVFP4 à
+taille égale) — au prix d'un TTFT batché moins bon (p99 16.7 s à C4 avec la
+politique `skip`). Journal complet avec artefacts :
+[BENCHMARKS.md](docs/BENCHMARKS.md) (source unique des deux lanes).
+
+**Comparaison mesurée** (détails et artefacts dans le journal) :
+
+| | Lane SGLang (défaut) | Lane EXL3 |
+|---|---|---|
+| Poids | NVFP4 communautaire | EXL3/TR3 4bpw (miroir octet-pour-octet) |
+| Fidélité (KLD vs officiel) | 0.0605 nats | **0.0246 nats ≈ FP8 officiel, pour 54 % des octets** |
+| Runtime | SGLang (6 correctifs SM121 audités) | vLLM + overlay 13 fichiers (sparse-MLA NoPE, MoE EXL3 fusionné) |
+| Contexte validé | 240k froid (pool ≈ 210k) | **1M** (pool 1.75M tokens à util 0.87) |
+| Décode mono | 37.2 tok/s (DFlash2, prompts standard) | 66.7 structured / 25.2 prose (DFlash2 k=7) |
+| TTFT en concurrence | **0.7–1.0 s @ C4** | 6.3–6.6 s @ C4 (politique prefill-skip) |
+
+**Quelle lane pour quoi :**
+
+| Besoin | Lane |
+|---|---|
+| sous-agents OpenCode en rafales, TTFT interactif | **SGLang/NVFP4** (p99 0.7 s à C4) |
+| contexte > 210k (jusqu'à 1M validé) | **EXL3/vLLM** |
+| fidélité de poids maximale (code, raisonnement) | **EXL3/vLLM** |
+| conversations multi-tours longues (réutilisation prefix) | **EXL3/vLLM** (4.1× sur les follow-ups) |
+
+**Démarrage (2× Spark)** — depuis `vllm-exl3/` ; nécessite SSH sans mot de
+passe head→worker, docker sans sudo sur les deux nœuds, ~180 GiB libres par
+nœud. Les réglages propres au kit (noms de NIC, indices GID, repli mémoire)
+sont documentés dans `vllm-exl3/.env.example` — lisez le bloc RoCE avant le
+premier boot.
+
+```bash
+cd vllm-exl3
+cp .env.example .env        # éditer HEAD_IP / WORKER_IP / NIC / GID
+./download.sh               # optionnel : ~164 GiB dans le cache HF du head
+./start.sh                  # tire l'image GHCR publique, synchronise, lance TP=2
+```
+
+API : `http://<HEAD_IP>:8888/v1`, modèle `GLM-5.3-Flash-EXL3`. Au premier run,
+`.env.example` est copié vers `.env` ; l'export du shell bat `.env`
+(`SPEC_METHOD=mtp ./start.sh restart` repasse la spéculation en MTP k=2).
+Penser à `chat_template_kwargs: {"enable_thinking": false}` pour les petits
+budgets de tokens.
+
+**À ne pas faire sur cette lane** : backend `--moe-backend marlin`, poids
+NVFP4, KV bf16 ou NVFP4 (`fp8_ds_mla` est la seule voie sparse-MLA sur SM12x) ;
+épingler `TRITON_ATTN` pour le drafter (effondrement d'acceptation,
+[EXL3-QUALITY.md](docs/EXL3-QUALITY.md)) ; baisser `MAX_MODEL_LEN` pour
+« libérer » du KV ; monter `MAX_NUM_BATCHED_TOKENS` pour « réparer » le prefix
+caching ; détruire les caches HF, requantizer, `docker rm` des caches ;
+changer TP, pins CX7 ou `USE_HOST_NCCL` sans replomber NCCL.
+
+**Interdictions amont toujours valables** : ne jamais combiner `tools` avec
+`response_format`/`guided_json` dans une requête, et attendre des stalls de
+prefill (10–40 s) quand de gros contextes arrivent concurremment — voir
+[EXL3-KNOWN-ISSUES.md](docs/EXL3-KNOWN-ISSUES.md) avant toute charge agentique.
+
+**Outils de la lane** (tout est exécuté depuis `vllm-exl3/`) : les quatre
+protocoles de bench (`bench_decode.py`, `bench_prefix_cache.py`,
+`bench_long_context.py`, `../bench-glm53.py`), le soak tool-calling issue #10
+(`tests/soak_tool_calls.py`), l'A/B C4 scheduler (`scripts/c4-chunk-ab.sh` +
+`tests/compare_c4.py`), le grader d'A/B qualité
+(`tests/grade_ab_quality.py` + `tests/ab_quality_prompts.jsonl`), la sonde de
+soak quotidien (`scripts/soak-day.sh`, protocole
+[EXL3-SOAK.md](docs/EXL3-SOAK.md)) et la suite no-GPU `tests/run-local.sh`.
+
+Par défaut, cette lane reste SGLang/NVFP4 tant que la lane EXL3 n'a pas
+passé sa checklist de promotion (comparaison C4
+`GLM53_MIXED_PREFILL_CHUNK=256`, validation tool-calling sous charge, soak
+agentique multi-jours, A/B qualité contre l'API officielle) — checklist dans
+[BENCHMARKS.md](docs/BENCHMARKS.md). Les deux
+lanes partagent les outils génériques (`bench-glm53.py`) mais aucun état :
+arrêtez une lane avant de démarrer l'autre.
+
 ## Reproductibilité et garde-fous
 
 - révisions du modèle et de la source BF16 épinglées ;
@@ -533,10 +622,14 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 
 - [audit du checkpoint](docs/AUDIT.md) ;
 - [optimisation : vitesse, concurrence et contexte](docs/OPTIMIZATION.md) ;
+- [mesure de la consommation électrique](docs/POWER.md) ;
 - [audit et trajectoire DFlash2](docs/DFLASH2.md) ;
 - [runbook expérimental 256K/384K/512K/MTP/CUDA graphs/DFlash2](docs/EXPERIMENT-RUNBOOK.md) ;
 - [configuration et diagnostic RoCE](docs/NETWORK.md) ;
-- [historique des benchmarks](docs/BENCHMARKS.md) ;
+- [historique des benchmarks](docs/BENCHMARKS.md) — source unique des deux lanes ;
+- [qualité EXL3 : KLD, acceptation DFlash2](docs/EXL3-QUALITY.md) ;
+- [issues amont connues de la lane EXL3](docs/EXL3-KNOWN-ISSUES.md) ;
+- [protocole et journal du soak multi-jours EXL3](docs/EXL3-SOAK.md) ;
 - [guide de dépannage](docs/TROUBLESHOOTING.md) ;
 - [crédits et inspirations](CREDITS.md).
 
@@ -547,6 +640,10 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 - [runtime SGLang SM121 audité](https://github.com/0xSero/glm-5.3-flash-sglang-sm121) ;
 - [documentation multi-nœud SGLang](https://docs.sglang.ai/backend/pd_disaggregation.html) ;
 - [recette 2× Spark de MiaAI-Lab](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark) ;
-- [recette Hy3 NVFP4 sur 2× GB10](https://huggingface.co/LibertAIDAI/Hy3-NVFP4/tree/main/deploy).
+- [recette Hy3 NVFP4 sur 2× GB10](https://huggingface.co/LibertAIDAI/Hy3-NVFP4/tree/main/deploy) ;
+- [recette EXL3 vLLM de MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks) (lane `vllm-exl3/`) ;
+- [checkpoint EXL3/TR3 4bpw](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw) et [son miroir public](https://huggingface.co/Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw) ;
+- [drafter DFlash2](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2) (CC BY-NC-ND 4.0) ;
+- [kernels ExLlamaV3](https://github.com/turboderp-org/exllamav3) (format EXL3).
 
 Le code de cette recette est distribué sous licence MIT. Les poids, l'image SGLang et leurs licences restent des artefacts externes distincts.
