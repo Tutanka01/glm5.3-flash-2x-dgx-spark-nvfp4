@@ -36,7 +36,7 @@ Chaque exécution écrit trois artefacts dans `results/` (ignoré par Git) :
 |---|---|
 | `glm53-power-<label>-<stamp>.json` | Résumé : stats par GPU (moyenne, pic, p95), énergie (J/Wh) et méthode, phases idle/charge, baseline idle, excès de charge |
 | `glm53-power-<label>-<stamp>.jsonl` | Flux brut ligne par ligne : `sample` (t, phase, watts, util, temp, horloges, compteur mJ), `marker`, `event` — `tail -f` + `jq` pour suivre en direct |
-| `glm53-power-<label>-<stamp>.svg` | Courbe de la puissance totale (bandes grises = phases idle, pointillés = markers) |
+| `glm53-power-<label>-<stamp>.svg` | Courbe de la puissance totale : axe Y auto-ajusté au pic réel, bandes grises = phases idle, ligne pointillée = moyenne de la phase de charge, pointillés verticaux = markers. Régénérable après coup sans GPU : `./bench-power.py --rechart results/glm53-power-<label>-<stamp>.jsonl` |
 
 ## Séparer les choses
 
@@ -97,6 +97,7 @@ labels distincts `head`/`worker`) et sommez les énergies du résumé.
 | `--gpu` | tous | indices GPU à échantillonner, ex. `--gpu 0,1` |
 | `--markers` | — | fichier de markers (créé s'il manque) |
 | `--no-jsonl` / `--no-chart` / `--quiet` | — | réduisent les sorties |
+| `--rechart JSONL` | — | régénère le SVG d'un run existant depuis son flux `.jsonl`, sans GPU |
 
 Le script gère Ctrl+C/SIGTERM proprement : la commande enveloppée reçoit
 SIGTERM (puis SIGKILL après 5 s), le résumé et la courbe sont écrits
