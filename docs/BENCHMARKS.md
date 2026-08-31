@@ -152,6 +152,59 @@ profil et la date.
   produit un premier token. Cette capacité reste « non mesurée » tant que le
   protocole ci-dessous n'a pas réussi.
 
+## Consommation électrique — balayage C1→C8 (2026-08-31)
+
+Premières mesures de puissance du cluster, via `bench-power.py` (protocole
+dans [POWER.md](POWER.md)) : nœud **head** (`thinkstationpgx-2ff1`, GB10,
+driver 580.159.03), profil `128k-dflash2-c8`, échantillonnage 0,5 s sur
+`power.draw.average`, intégration trapézoïdale (compteur d'énergie NVML non
+supporté par ce driver). Le worker n'a pas été échantillonné dans cette
+passe : les Wh ci-dessous couvrent le GPU du head uniquement. L'« excès »
+retire la baseline idle (GPU chargé, à vide) mesurée avant/après chaque run.
+
+| Date | Profil | Test | C | Agrégé | GPU mean | GPU pic | Énergie bench | Excès vs idle | J/token (excès) | Artefact |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-31 | `128k-dflash2-c8` | idle watch 60 s (modèle chargé) | — | — | 9,8 W | 10,0 W | 0,163 Wh | — | — | `glm53-power-idle-128k-dflash2-c8-20260831-083822.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (essai C6 isolé) | 6 | 80,5 tok/s | 35,9 W | 40,0 W | 0,63 Wh | 0,43 Wh | 0,32 | `glm53-power-c6-20260831-083931.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 1 | 35,4 tok/s | 33,8 W | 37,5 W | 1,27 Wh | 0,81 Wh | 0,61 | `glm53-power-c1-20260831-084139.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 2 | 49,4 tok/s | 34,5 W | 37,7 W | 0,93 Wh | 0,59 Wh | 0,45 | `glm53-power-c2-20260831-084414.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 4 | 72,1 tok/s | 35,5 W | 40,0 W | 0,66 Wh | 0,42 Wh | 0,32 | `glm53-power-c4-20260831-084612.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 5 | 78,4 tok/s | 38,0 W | 42,0 W | 0,66 Wh | 0,43 Wh | 0,33 | `glm53-power-c5-20260831-084739.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 6 | 80,5 tok/s | 37,9 W | 42,9 W | 0,65 Wh | 0,43 Wh | 0,32 | `glm53-power-c6-20260831-084902.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 7 | 83,1 tok/s | 38,0 W | 41,4 W | 0,63 Wh | 0,42 Wh | 0,32 | `glm53-power-c7-20260831-085023.json` |
+| 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 8 | 78,2 tok/s | 37,7 W | 41,5 W | 0,66 Wh | 0,43 Wh | 0,33 | `glm53-power-c8-20260831-085142.json` |
+
+### Lecture des mesures de puissance du 2026-08-31
+
+- **Le GB10 consomme très peu et surtout très constant.** Idle GPU chargé :
+  10–13 W selon la phase ; sous charge : 34–38 W en moyenne, pics ≤ 43 W,
+  utilisation 94–95 %, horloges SM stables ~2 500 MHz, 60–68 °C — aucun signe
+  de throttling thermique. Le décode d'un 320B NVFP4 est memory-bound : le
+  batching « remplit » les mêmes passes mémoire au lieu d'en ajouter.
+- **La puissance ne suit pas le débit, l'efficacité si.** De C1 à C7, la
+  puissance moyenne ne monte que de ~12 % (33,8 → 38,0 W) quand le débit
+  agrégé fait ×2,3 (35,4 → 83,1 tok/s) : le coût énergétique par token
+  généré est ainsi divisé par ~1,9 (0,61 → 0,32 J/token en excès, soit
+  ~0,09 mWh/token à C4+). Le point d'exploitation C6–C7 est aussi le plus
+  efficient énergétiquement — pas d'arbitrage débit/énergie sur ce profil.
+- **Batcher divise l'énergie du bench par ~2.** Le même travail (~4 750
+  tokens, 9 requêtes) coûte 1,27 Wh à C1 contre 0,63–0,66 Wh à C4+,
+  cohérent avec le wall clock (134 s → 60 s). En continu à C6, le décode ne
+  coûte que ~0,9 kWh/jour côté GPU, plus ~0,3 kWh/jour d'idle (par nœud).
+- **Reproductibilité correcte.** Deux C6 consécutifs : 2,27 vs 2,34 kJ
+  (±1,5 %) pour le même travail ; baseline idle 11,3–13,0 W selon que la
+  phase précède ou suit une charge (le power management relève légèrement
+  l'idle juste après). Zéro échantillon perdu sur les 8 runs, aucun trou
+  d'échantillonnage > 0,54 s.
+- **Cohérence avec le balayage perf du 28/08** : agrégés du jour 35,4 (C1)
+  → 80,5 (C6) → 83,1 (C7) → 78,2 (C8). Le sommet exact se déplace d'un cran
+  dans le bruit inter-run (±4 %, 86,0 à C6 le 28/08) ; le plateau C4–C8 et
+  la régression au-delà se confirment.
+- **Périmètre et limites** : puissance **carte GPU uniquement** (un GB10 par
+  nœud) — la prise murale ajoutera CPU Grace, DRAM, NICs et pertes
+  d'alimentation ; à utiliser pour **comparer** les profils entre eux, pas
+  pour une facture. `power_limit_w` n'est pas exposé par ce driver.
+
 ## Matrice de capacité long-contexte
 
 Le checkpoint est nativement configuré pour 1 048 576 tokens, mais la fenêtre
