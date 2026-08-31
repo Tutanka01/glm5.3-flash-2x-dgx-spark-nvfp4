@@ -905,6 +905,17 @@ def _polyline(points: list[tuple[float, float]], x_of: Callable[[float], float],
     )
 
 
+def _nice_ceiling(value: float) -> float:
+    """Smallest 1/1.2/1.5/2/2.5/3/4/5/6/8/10 × 10^k at or above value."""
+    if value <= 0:
+        return 1.0
+    power = 10 ** math.floor(math.log10(value))
+    for factor in (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        if factor * power >= value:
+            return factor * power
+    return 10 * power
+
+
 def render_svg(
     path: Path,
     samples: list[dict[str, Any]],
@@ -912,6 +923,7 @@ def render_svg(
     label: str,
     host: str,
 ) -> bool:
+    """Chart GPU power over time as a standalone SVG. Returns False if unplottable."""
     if len(samples) < 2:
         return False
     escape = saxutils.escape
@@ -920,6 +932,7 @@ def render_svg(
     )
     series: dict[str, list[tuple[float, float]]] = {key: [] for key in gpu_keys}
     total_points: list[tuple[float, float]] = []
+    phase_sums: dict[str, list[float]] = {}
     for record in samples:
         gpu_watts = [
             d["w"]
@@ -931,6 +944,7 @@ def render_svg(
                 series[device["key"]].append((record["t"], device["w"]))
         if gpu_watts:
             total_points.append((record["t"], sum(gpu_watts)))
+            phase_sums.setdefault(record["phase"], []).append(sum(gpu_watts))
     if not total_points:
         return False
 
@@ -938,12 +952,23 @@ def render_svg(
     w_max = max(w for _, w in total_points)
     for points in series.values():
         w_max = max(w_max, max((w for _, w in points), default=0.0))
-    y_top = max(_nice_step(w_max * 1.08, 4) if w_max > 0 else 10.0, 10.0)
+    # Y scale must cover the data: nice ceiling ≥ 1.06 × peak, then snap the
+    # top gridline onto the step so the axis always ends on a labelled tick.
+    y_top = _nice_ceiling(max(w_max * 1.06, 1.0))
     y_step = _nice_step(y_top, 5)
-    y_top = math.ceil(y_top / y_step) * y_step
+    y_top = math.ceil((y_top - 1e-9) / y_step) * y_step
+
+    # busiest phase (the load) gets a mean reference line
+    mean_phase, mean_w = None, None
+    for phase_name, values in phase_sums.items():
+        mean = statistics.fmean(values)
+        if mean_w is None or mean > mean_w:
+            mean_phase, mean_w = phase_name, mean
 
     plot_w = _SVG_W - _M_LEFT - _M_RIGHT
     plot_h = _SVG_H - _M_TOP - _M_BOTTOM
+    plot_right = _SVG_W - _M_RIGHT
+    plot_bottom = _M_TOP + plot_h
     x_of = lambda t: _M_LEFT + (t / t_max) * plot_w  # noqa: E731
     y_of = lambda w: _M_TOP + plot_h - (w / y_top) * plot_h  # noqa: E731
 
@@ -953,8 +978,10 @@ def render_svg(
         'viewBox="0 0 %d %d" font-family="Menlo,Consolas,monospace">' % (_SVG_W, _SVG_H)
     )
     parts.append(
-        f'<rect width="{_SVG_W}" height="{_SVG_H}" fill="#ffffff"/>'
+        f'<defs><clipPath id="plot-clip"><rect x="{_M_LEFT}" y="{_M_TOP}" '
+        f'width="{plot_w}" height="{plot_h}"/></clipPath></defs>'
     )
+    parts.append(f'<rect width="{_SVG_W}" height="{_SVG_H}" fill="#ffffff"/>')
     parts.append(
         f'<text x="{_M_LEFT}" y="18" font-size="13" fill="#111">'
         f"{escape(sanitize_label(label))} — GPU power over time</text>"
@@ -962,10 +989,11 @@ def render_svg(
     parts.append(
         f'<text x="{_M_LEFT}" y="33" font-size="10" fill="#666">'
         f'{escape(host)} — {escape(str(samples[0].get("ts", "")))} — '
-        f"{len(samples)} samples</text>"
+        f"{len(samples)} samples @ {escape(str(samples[1]['t'] - samples[0]['t']))} s"
+        f" — peak {w_max:.1f} W</text>"
     )
 
-    # phase bands (idle shading) drawn behind the grid
+    # phase bands (idle shading) drawn behind everything, inside the plot
     bands: list[tuple[str, float, float]] = []
     current_phase = samples[0]["phase"]
     band_start = samples[0]["t"]
@@ -973,82 +1001,152 @@ def render_svg(
         if record["phase"] != current_phase:
             bands.append((current_phase, band_start, record["t"]))
             current_phase, band_start = record["phase"], record["t"]
+
+    inner: list[str] = []
     for phase, t0, t1 in bands:
         if not phase.startswith("idle"):
             continue
-        parts.append(
-            f'<rect x="{x_of(t0):.1f}" y="{_M_TOP}" width="{max(x_of(t1) - x_of(t0), 1):.1f}" '
-            f'height="{plot_h}" fill="#000000" opacity="0.06"/>'
-        )
-        parts.append(
-            f'<text x="{x_of(t0) + 3:.1f}" y="{_M_TOP + 11}" font-size="9" fill="#888">'
-            f"{escape(phase)}</text>"
+        inner.append(
+            f'<rect x="{x_of(t0):.1f}" y="{_M_TOP}" '
+            f'width="{max(x_of(t1) - x_of(t0), 1):.1f}" height="{plot_h}" '
+            'fill="#000000" opacity="0.06"/>'
         )
 
-    # grid + axes
+    # grid
     tick = 0.0
     while tick <= y_top + 1e-9:
         y = y_of(tick)
-        parts.append(
-            f'<line x1="{_M_LEFT}" y1="{y:.1f}" x2="{_SVG_W - _M_RIGHT}" y2="{y:.1f}" '
+        inner.append(
+            f'<line x1="{_M_LEFT}" y1="{y:.1f}" x2="{plot_right}" y2="{y:.1f}" '
             'stroke="#e3e3e3" stroke-width="1"/>'
-        )
-        parts.append(
-            f'<text x="{_M_LEFT - 6}" y="{y + 3:.1f}" font-size="9" fill="#555" '
-            f'text-anchor="end">{tick:g}</text>'
         )
         tick += y_step
     x_step = _nice_step(t_max, 8)
     tick = 0.0
     while tick <= t_max + 1e-9:
         x = x_of(tick)
-        parts.append(
-            f'<line x1="{x:.1f}" y1="{_M_TOP}" x2="{x:.1f}" y2="{_M_TOP + plot_h}" '
+        inner.append(
+            f'<line x1="{x:.1f}" y1="{_M_TOP}" x2="{x:.1f}" y2="{plot_bottom}" '
             'stroke="#f0f0f0" stroke-width="1"/>'
         )
-        parts.append(
-            f'<text x="{x:.1f}" y="{_SVG_H - _M_BOTTOM + 14}" font-size="9" fill="#555" '
-            f'text-anchor="middle">{tick:g}</text>'
-        )
         tick += x_step
-    parts.append(
-        f'<line x1="{_M_LEFT}" y1="{_M_TOP + plot_h}" x2="{_SVG_W - _M_RIGHT}" '
-        f'y2="{_M_TOP + plot_h}" stroke="#999" stroke-width="1"/>'
-    )
-    parts.append(
-        f'<text x="{_SVG_W - _M_RIGHT}" y="{_SVG_H - _M_BOTTOM + 30}" font-size="10" '
-        'fill="#444" text-anchor="end">s</text>'
-    )
-    parts.append(
-        f'<text x="10" y="{_M_TOP - 14}" font-size="10" fill="#444">W</text>'
-    )
 
     # markers as dashed vertical lines
     for marker in markers[:40]:
         x = x_of(marker["t"])
-        parts.append(
-            f'<line x1="{x:.1f}" y1="{_M_TOP}" x2="{x:.1f}" y2="{_M_TOP + plot_h}" '
+        inner.append(
+            f'<line x1="{x:.1f}" y1="{_M_TOP}" x2="{x:.1f}" y2="{plot_bottom}" '
             'stroke="#888" stroke-dasharray="3,3" stroke-width="1"/>'
         )
-        parts.append(
-            f'<text x="{x + 2:.1f}" y="{_M_TOP + 11}" font-size="9" fill="#555" '
-            f'transform="rotate(-35 {x + 2:.1f} {_M_TOP + 11})">'
-            f"{escape(str(marker.get('label', ''))[:24])}</text>"
+
+    # load-phase mean reference line
+    if mean_w is not None and mean_phase is not None:
+        inner.append(
+            f'<line x1="{_M_LEFT}" y1="{y_of(mean_w):.1f}" x2="{plot_right}" '
+            f'y2="{y_of(mean_w):.1f}" stroke="#d0342c" opacity="0.45" '
+            'stroke-dasharray="5,4" stroke-width="1"/>'
         )
 
     palette = ["#3b6fb5", "#2a9d6f", "#c77d2b", "#8a5fb5"]
-    for key, points in sorted(series.items()):
-        if len(points) < 2:
-            continue
-        color = palette[gpu_keys.index(key) % len(palette)]
-        parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="1" opacity="0.75" '
-            f'points="{_polyline(points, x_of, y_of)}"/>'
+    if len(gpu_keys) > 1:
+        for key, points in sorted(series.items()):
+            if len(points) < 2:
+                continue
+            color = palette[gpu_keys.index(key) % len(palette)]
+            inner.append(
+                f'<polyline fill="none" stroke="{color}" stroke-width="1" '
+                f'opacity="0.75" points="{_polyline(points, x_of, y_of)}"/>'
+            )
+    if len(total_points) >= 2:
+        inner.append(
+            f'<polyline fill="none" stroke="#d0342c" stroke-width="1.8" '
+            f'points="{_polyline(total_points, x_of, y_of)}"/>'
         )
+    parts.append(f'<g clip-path="url(#plot-clip)">{"".join(inner)}</g>')
+
+    # axes frame
     parts.append(
-        f'<polyline fill="none" stroke="#d0342c" stroke-width="1.8" '
-        f'points="{_polyline(total_points, x_of, y_of)}"/>'
+        f'<line x1="{_M_LEFT}" y1="{plot_bottom}" x2="{plot_right}" y2="{plot_bottom}" '
+        'stroke="#999" stroke-width="1"/>'
     )
+    parts.append(
+        f'<line x1="{_M_LEFT}" y1="{_M_TOP}" x2="{_M_LEFT}" y2="{plot_bottom}" '
+        'stroke="#999" stroke-width="1"/>'
+    )
+
+    # tick labels
+    tick = 0.0
+    while tick <= y_top + 1e-9:
+        y = y_of(tick)
+        parts.append(
+            f'<text x="{_M_LEFT - 6}" y="{y + 3:.1f}" font-size="9" fill="#555" '
+            f'text-anchor="end">{tick:g}</text>'
+        )
+        tick += y_step
+    tick = 0.0
+    while tick <= t_max + 1e-9:
+        x = x_of(tick)
+        parts.append(
+            f'<text x="{x:.1f}" y="{plot_bottom + 14}" font-size="9" fill="#555" '
+            f'text-anchor="middle">{tick:g}</text>'
+        )
+        tick += x_step
+    parts.append(
+        f'<text x="{plot_right}" y="{plot_bottom + 28}" font-size="10" '
+        'fill="#444" text-anchor="end">s</text>'
+    )
+    parts.append(
+        f'<text x="10" y="{_M_TOP + 4}" font-size="10" fill="#444">W</text>'
+    )
+
+    # phase band names, only when the band is wide enough to hold them
+    for phase, t0, t1 in bands:
+        if not phase.startswith("idle") or x_of(t1) - x_of(t0) < 48:
+            continue
+        parts.append(
+            f'<text x="{x_of(t0) + 4:.1f}" y="{_M_TOP + 12}" font-size="9" fill="#888">'
+            f"{escape(phase)}</text>"
+        )
+
+    if mean_w is not None and mean_phase is not None:
+        parts.append(
+            f'<text x="{plot_right - 4}" y="{y_of(mean_w) - 4:.1f}" font-size="9" '
+            'fill="#b03028" text-anchor="end">'
+            f"{escape(str(mean_phase))} · moyenne {mean_w:.1f} W</text>"
+        )
+
+    # marker labels above the plot, fanned out
+    for marker in markers[:40]:
+        x = x_of(marker["t"])
+        parts.append(
+            f'<text x="{x + 2:.1f}" y="{_M_TOP - 4}" font-size="9" fill="#555" '
+            f'text-anchor="start">{escape(str(marker.get("label", ""))[:24])}</text>'
+        )
+
+    if len(gpu_keys) > 1:
+        legend_y = _M_TOP + 12
+        for key in gpu_keys:
+            color = palette[gpu_keys.index(key) % len(palette)]
+            parts.append(
+                f'<line x1="{plot_right - 120}" y1="{legend_y - 3}" '
+                f'x2="{plot_right - 104}" y2="{legend_y - 3}" stroke="{color}" '
+                'stroke-width="2"/>'
+            )
+            parts.append(
+                f'<text x="{plot_right - 100}" y="{legend_y}" font-size="9" '
+                f'fill="#444">{escape(key)}</text>'
+            )
+            legend_y += 13
+        parts.append(
+            f'<line x1="{plot_right - 120}" y1="{legend_y - 3}" '
+            f'x2="{plot_right - 104}" y2="{legend_y - 3}" stroke="#d0342c" '
+            'stroke-width="2"/>'
+        )
+        parts.append(
+            f'<text x="{plot_right - 100}" y="{legend_y}" font-size="9" '
+            'fill="#444">total</text>'
+        )
+
     parts.append("</svg>\n")
     path.write_text("".join(parts), encoding="utf-8")
     return True
@@ -1425,6 +1523,40 @@ def cmd_list_gpus(
     return 0
 
 
+def cmd_rechart(jsonl_path: Path) -> int:
+    """Regenerate the SVG chart from an existing JSONL stream (no GPU needed)."""
+    records: list[dict[str, Any]] = []
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("kind") in ("sample", "marker"):
+                records.append(record)
+    samples = [r for r in records if r["kind"] == "sample"]
+    markers = [r for r in records if r["kind"] == "marker"]
+    label = re.sub(r"-\d{8}-\d{6}$", "", re.sub(r"^glm53-power-", "", jsonl_path.stem))
+    host = socket.gethostname()
+    summary_path = jsonl_path.with_suffix(".json")
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            label = summary.get("label", label)
+            host = summary.get("host", host)
+        except (OSError, json.JSONDecodeError):
+            pass
+    out_path = jsonl_path.with_suffix(".svg")
+    if not render_svg(out_path, samples, markers, label, host):
+        print(f"rechart: not enough plottable samples in {jsonl_path}", file=sys.stderr)
+        return 2
+    print(f"Recharted {out_path}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1471,6 +1603,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true", help="no live stderr status line")
     parser.add_argument("--list-gpus", action="store_true",
                         help="print detected GPUs/system counters as JSON and exit")
+    parser.add_argument("--rechart", type=Path, default=None, metavar="JSONL",
+                        help="regenerate the SVG chart from an existing .jsonl "
+                        "stream and exit (no GPU required)")
     parser.set_defaults(gpu_set=None, command=None)
     return parser
 
@@ -1509,6 +1644,8 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             parser.error(f"--markers file cannot be created: {exc}")
 
+    if args.rechart is not None:
+        return cmd_rechart(args.rechart)
     if args.list_gpus:
         return cmd_list_gpus(args)
     if command is not None:

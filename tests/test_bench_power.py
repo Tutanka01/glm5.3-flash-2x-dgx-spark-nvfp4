@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 import time
@@ -272,6 +273,58 @@ class WrapRunTests(unittest.TestCase):
             content = path.read_text(encoding="utf-8")
         self.assertTrue(content.startswith("<svg"))
         self.assertIn("<polyline", content)
+
+    def test_render_svg_keeps_peaks_inside_plot(self) -> None:
+        """Regression: the y scale must cover the data, not clip the load phase."""
+        samples = []
+        t = 0.0
+        for _ in range(20):  # idle around 12 W
+            samples.append({"kind": "sample", "t": round(t, 3),
+                            "ts": "2026-08-31T00:00:00.000Z", "phase": "idle_before",
+                            "devices": [{"key": "gpu0", "group": "gpu", "w": 12.0}]})
+            t += 0.5
+        for i in range(40):  # load ramping to ~43 W
+            samples.append({"kind": "sample", "t": round(t, 3),
+                            "ts": "2026-08-31T00:00:00.000Z", "phase": "load",
+                            "devices": [{"key": "gpu0", "group": "gpu", "w": 20 + 0.6 * i}]})
+            t += 0.5
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ramp.svg"
+            self.assertTrue(POWER.render_svg(path, samples, [], "ramp", "host"))
+            content = path.read_text(encoding="utf-8")
+        self.assertIn("clipPath", content)
+        plot_bottom = POWER._SVG_H - POWER._M_BOTTOM
+        for match in re.finditer(r'points="([^"]+)"', content):
+            for pair in match.group(1).split():
+                y = float(pair.split(",")[1])
+                self.assertGreaterEqual(y, POWER._M_TOP - 0.5)
+                self.assertLessEqual(y, plot_bottom + 0.5)
+        self.assertIn("moyenne", content)  # load-phase mean reference line
+
+    def test_rechart_regenerates_svg_from_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "glm53-power-demo-20260831-000000.jsonl"
+            lines = [
+                json.dumps({"kind": "sample", "t": t / 10,
+                            "ts": "2026-08-31T00:00:00.000Z", "phase": "watch",
+                            "devices": [{"key": "gpu0", "group": "gpu", "w": 50.0 + t}]})
+                for t in range(12)
+            ]
+            lines.append(json.dumps({"kind": "marker", "t": 0.5,
+                                     "ts": "2026-08-31T00:00:00.000Z",
+                                     "phase": "watch", "label": "prompt 1"}))
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            exit_code = POWER.cmd_rechart(path)
+            self.assertEqual(exit_code, 0)
+            chart = path.with_suffix(".svg")
+            self.assertTrue(chart.exists())
+            self.assertTrue(chart.read_text(encoding="utf-8").startswith("<svg"))
+            self.assertIn("prompt 1", chart.read_text(encoding="utf-8"))
+            starved = Path(tmp) / "starved.jsonl"
+            starved.write_text('{"kind": "sample", "t": 0.0, "phase": "watch", '
+                               '"devices": []}\n', encoding="utf-8")
+            self.assertEqual(POWER.cmd_rechart(starved), 2)
+            self.assertFalse(starved.with_suffix(".svg").exists())
 
 
 if __name__ == "__main__":
