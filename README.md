@@ -502,6 +502,14 @@ export ZAI_API_KEY='...'
 
 Les résultats sont écrits dans `results/`, ignoré par Git. Une comparaison de qualité sérieuse doit conserver les mêmes prompts, températures, budgets de tokens et tâches agentiques des deux côtés. Les mesures marquantes sont archivées dans [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
+Pour mesurer la **consommation électrique** d'un bench (watts, énergie,
+baseline idle), enveloppez-le avec
+[`bench-power.py`](docs/POWER.md) :
+
+```bash
+./bench-power.py --label c6 -- python3 bench-glm53.py --runs 3 --concurrency 6
+```
+
 ## Lane EXL3/vLLM (branche `dev`, répertoire `vllm-exl3/`)
 
 Seconde lane produit : les poids **EXL3/TR3 4bpw** servis par **vLLM** via la
@@ -614,6 +622,7 @@ Ces tests ne téléchargent pas le checkpoint complet et ne remplacent pas un d�
 
 - [audit du checkpoint](docs/AUDIT.md) ;
 - [optimisation : vitesse, concurrence et contexte](docs/OPTIMIZATION.md) ;
+- [mesure de la consommation électrique](docs/POWER.md) ;
 - [audit et trajectoire DFlash2](docs/DFLASH2.md) ;
 - [runbook expérimental 256K/384K/512K/MTP/CUDA graphs/DFlash2](docs/EXPERIMENT-RUNBOOK.md) ;
 - [configuration et diagnostic RoCE](docs/NETWORK.md) ;
