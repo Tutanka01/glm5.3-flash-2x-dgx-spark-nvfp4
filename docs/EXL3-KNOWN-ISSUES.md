@@ -3,9 +3,22 @@
 This lane vendors the MiaAI-Lab EXL3 recipe and adds fixes from its public
 issue tracker. Read this before production use.
 
+**Sync upstream 2026-09-02 (`e25aa70`)** : tout l'upstream a été repris
+(kernel E2 fat-expert prefill PR77, recipe stamp, garde de config numérique,
+kpool-tail-slotmap, spinwait, indexer-workspace, template Reasoning Effort
+inconditionnel, TP=4 expérimental, ablit optionnel désactivé). Les fixes
+listés ci-dessous, à l'exception du cache-reset (#31), sont désormais **dans
+l'upstream main** — ils restent documentés pour l'historique.
+
 ## Fixed in this vendor (vs upstream `main`)
 
 | Upstream ref | Fix |
+|---|---|
+| [Issue #31](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/issues/31) | **Vendor-only** : `overlay/patch_cache_reset.py` monte uniquement les routes dev de reset de cache (`/reset_prefix_cache` et al.) sur l'API head, piloté par `GLM53_EXPOSE_CACHE_RESET` — absent de l'upstream main au 2026-09-02. |
+
+### Historique — repris par l'upstream main (vérifié 2026-09-02)
+
+| Upstream ref | Fix (désormais upstream) |
 |---|---|
 | [PR #26](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/pull/26) | Per-rank RoCEv2 GID index: `HEAD_GID` / `WORKER_GID` (default = `NCCL_IB_GID_INDEX`). On kits where no single GID index is populated on both devices (observed: 4 on head, 3 on worker), a single index kills TP init with an unhandled NCCL error. Preflight now validates each rank's index and prints both GID tables when refusing. |
 | [Issue #22](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/issues/22) (1) | `HF_BIN` override + venv path probing + `python3 -m huggingface_hub.commands.huggingface_cli` fallback, so the download step no longer dies when `hf` lives outside `PATH`. |
@@ -13,7 +26,6 @@ issue tracker. Read this before production use.
 | [Issue #22](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/issues/22) (4) | `wait_for_health` detects a dead worker container after 3 consecutive failed inspections (~30 s) and fails with the log dump, instead of polling `/health` for the full `READY_TIMEOUT`. |
 
 ## Open upstream — behave accordingly
-
 ### Issue #10 — blank/missing required tool-call arguments under concurrent load
 Under heavy concurrent load (multi-tool-call turns + large cold prefills),
 `tool_calls` sometimes come back with a function name but empty required

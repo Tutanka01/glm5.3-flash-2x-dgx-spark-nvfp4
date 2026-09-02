@@ -528,7 +528,7 @@ politique `skip`). Journal complet avec artefacts :
 |---|---|---|
 | Poids | NVFP4 communautaire | EXL3/TR3 4bpw (miroir octet-pour-octet) |
 | Fidélité (KLD vs officiel) | 0.0605 nats | **0.0246 nats ≈ FP8 officiel, pour 54 % des octets** |
-| Runtime | SGLang (6 correctifs SM121 audités) | vLLM + overlay 13 fichiers (sparse-MLA NoPE, MoE EXL3 fusionné) |
+| Runtime | SGLang (6 correctifs SM121 audités) | vLLM + overlay 22 fichiers (sparse-MLA NoPE, MoE EXL3 fusionné, kernel CUDA E2 fat-expert) |
 | Contexte validé | 240k froid (pool ≈ 210k) | **1M** (pool 1.75M tokens à util 0.87) |
 | Décode mono | 37.2 tok/s (DFlash2, prompts standard) | 66.7 structured / 25.2 prose (DFlash2 k=7) |
 | TTFT en concurrence | **0.7–1.0 s @ C4** | 6.3–6.6 s @ C4 (politique prefill-skip) |
@@ -554,6 +554,19 @@ cp .env.example .env        # éditer HEAD_IP / WORKER_IP / NIC / GID
 ./download.sh               # optionnel : ~164 GiB dans le cache HF du head
 ./start.sh                  # tire l'image GHCR publique, synchronise, lance TP=2
 ```
+
+> **Sync amont 2026-09-02** (`e25aa70`) : la lane embarque le kernel E2
+> fat-expert prefill ([PR77 amont](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/pull/77),
+> **+20–21 % de prefill froid** 8k/100k/300k, décode inchangé), `MAX_NUM_BATCHED_TOKENS=7168`,
+> `DFLASH_DRAFT_TP=2`, le garde-fou de config numérique, le recipe stamp
+> (rebuild auto quand `Dockerfile`/`overlay/` changent après un git pull), les
+> correctifs kpool-tail-slotmap et template (Reasoning Effort inconditionnel →
+> prefix-cache), et `GLM53_INDEXER_WORKSPACE=rightsize` en opt-in (~+26 % de KV).
+> L'image GHCR `:exl3` publique date du 2026-08-28 : le **premier** `./start.sh`
+> après ce sync détectera l'écart de stamp et **reconstruira l'image localement**
+> (couche CUDA incluse — comptez longtemps ; `SKIP_BUILD=1` pour rester sur
+> GHCR avec `EXL3_FAT_KERNEL=0`). Nos correctifs locaux (#31 cache-reset) sont
+> conservés et passent dans le hash du stamp.
 
 API : `http://<HEAD_IP>:8888/v1`, modèle `GLM-5.3-Flash-EXL3`. Au premier run,
 `.env.example` est copié vers `.env` ; l'export du shell bat `.env`
