@@ -10,6 +10,11 @@ inconditionnel, TP=4 expérimental, ablit optionnel désactivé). Les fixes
 listés ci-dessous, à l'exception du cache-reset (#31), sont désormais **dans
 l'upstream main** — ils restent documentés pour l'historique.
 
+**Licence amont** : l'upstream est passé de MIT à **AGPL-3.0** le 2026-09-07
+(`cf0f430`). Ce vendor reste au snapshot MIT `e25aa70` ; tout sync passe
+d'abord par `vllm-exl3/scripts/check-vendor-license.sh <ref>` (politique dans
+[CREDITS.md](../CREDITS.md#politique-de-licence-du-vendor-vllm-exl3)).
+
 ## Fixed in this vendor (vs upstream `main`)
 
 | Upstream ref | Fix |

@@ -78,6 +78,7 @@ _cli_ablit_direction="${ABLIT_DIRECTION-}"
 _cli_ablit_layers="${ABLIT_LAYERS-}"
 _cli_ablit_alpha="${ABLIT_ALPHA-}"
 _cli_ablit_mtp="${ABLIT_INCLUDE_MTP-}"
+_cli_ablit_auto_fetch="${ABLIT_AUTO_FETCH-}"
 # Setness-aware: an explicitly empty caller value is an operator error and
 # must reach validate_numeric_config, not be swallowed by a .env value.
 _cli_indexer_workspace_set="${GLM53_INDEXER_WORKSPACE+1}"
@@ -108,6 +109,7 @@ set +a
 [ -n "${_cli_ablit_layers}" ] && ABLIT_LAYERS="$_cli_ablit_layers"
 [ -n "${_cli_ablit_alpha}" ] && ABLIT_ALPHA="$_cli_ablit_alpha"
 [ -n "${_cli_ablit_mtp}" ] && ABLIT_INCLUDE_MTP="$_cli_ablit_mtp"
+[ -n "${_cli_ablit_auto_fetch}" ] && ABLIT_AUTO_FETCH="$_cli_ablit_auto_fetch"
 [ -n "${_cli_indexer_workspace_set}" ] && GLM53_INDEXER_WORKSPACE="$_cli_indexer_workspace"
 [ -n "${_cli_spinwait_ms_set}" ] && GLM53_SPINWAIT_MS="$_cli_spinwait_ms"
 
@@ -237,16 +239,27 @@ EXL3_FAT_BATCHED="${EXL3_FAT_BATCHED:-0}"
 EXL3_FAT_KERNEL="${EXL3_FAT_KERNEL:-1}"
 
 # --- abliteration (ablit/) --------------------------------------------------
-# Load-time o_proj orthogonalization (overlay/ablit_runtime.py). Published
-# recipe: layers 15-45 edited with the dealign direction, 0-14 stay stock
-# safety anchors, MTP block included. 0 = stock weights. Applied identically
-# on both TP ranks; the DFlash2 drafter is never touched.
+# Load-time o_proj transplant (overlay/ablit_runtime.py). Published recipe
+# (2026-09-27): layers 15-43 + MTP block 45 take the Dealign o_proj, 0-14 and
+# 44 stay stock safety anchors. 0 = stock weights. Applied identically on both
+# TP ranks; the DFlash2 drafter is never touched. ABLIT=1 is the only switch:
+# the pinned donor tensors are fetched on first use (ABLIT_AUTO_FETCH=1).
 ABLIT="${ABLIT:-0}"
-ABLIT_METHOD="${ABLIT_METHOD:-auto}"           # auto | transplant | proj
-ABLIT_DIRECTION="${ABLIT_DIRECTION:-dealign}"  # dealign | bf_oproj | /path/dir.pt
-ABLIT_LAYERS="${ABLIT_LAYERS:-15-45}"          # inclusive; 45 = checkpoint MTP block
-ABLIT_ALPHA="${ABLIT_ALPHA:-3.0}"              # 1.0 = plain projection, >1 over-projects
+ABLIT_METHOD="${ABLIT_METHOD:-auto}"           # auto (= transplant) | transplant | proj
+ABLIT_DIRECTION="${ABLIT_DIRECTION:-dealign}"  # proj-only: dealign | bf_oproj | /path/dir.pt
+ABLIT_LAYERS="${ABLIT_LAYERS:-15-43,45}"       # inclusive; 45 = checkpoint MTP block
+ABLIT_ALPHA="${ABLIT_ALPHA:-3.0}"              # proj-only: 1.0 = plain projection
 ABLIT_INCLUDE_MTP="${ABLIT_INCLUDE_MTP:-1}"
+ABLIT_AUTO_FETCH="${ABLIT_AUTO_FETCH:-1}"      # 0 = refuse to start instead of fetching
+# ABLIT=1 serves under its own model id so no client mistakes the edited
+# weights for stock; the stock id stays accepted as an alias, so existing
+# client configs keep working. Empty suffix = keep the stock id only.
+ABLIT_MODEL_SUFFIX="${ABLIT_MODEL_SUFFIX--Ablit}"
+SERVED_MODEL_ALIASES="${SERVED_MODEL_ALIASES:-}"
+if [ "$ABLIT" = "1" ] && [ -n "$ABLIT_MODEL_SUFFIX" ]; then
+    SERVED_MODEL_ALIASES="${SERVED_MODEL_NAME}${SERVED_MODEL_ALIASES:+ $SERVED_MODEL_ALIASES}"
+    SERVED_MODEL_NAME="${SERVED_MODEL_NAME}${ABLIT_MODEL_SUFFIX}"
+fi
 
 READY_TIMEOUT="${READY_TIMEOUT:-3600}"
 # 1 = suppress client stop strings until </think> (DSpark #42 class).
@@ -514,7 +527,8 @@ preflight() {
     [ -f "$SCRIPT_DIR/overlay/ablit_runtime.py" ] || die "$SCRIPT_DIR/overlay/ablit_runtime.py missing"
     [ -f "$SCRIPT_DIR/ablit/LAYER_MAP.json" ] || die "$SCRIPT_DIR/ablit/LAYER_MAP.json missing"
     if [ "$ABLIT" = "1" ]; then
-        log "ablit: ON (method=${ABLIT_METHOD} direction=${ABLIT_DIRECTION} layers=${ABLIT_LAYERS} alpha=${ABLIT_ALPHA} mtp=${ABLIT_INCLUDE_MTP})"
+        log "ablit: ON (method=${ABLIT_METHOD} layers=${ABLIT_LAYERS} mtp=${ABLIT_INCLUDE_MTP} model=${SERVED_MODEL_NAME})"
+        [ "$ABLIT_METHOD" = "proj" ] || ensure_ablit_transplant
     fi
 
     local need_kb=$((180 * 1024 * 1024)) avail
@@ -533,6 +547,20 @@ preflight() {
     fi
 
     log "preflight OK (head=$(hostname) ${HEAD_IP}, worker=${WORKER_SSH})"
+}
+
+# The transplant tensors are fetched on the head and rsynced to the worker
+# with the rest of ablit/. Fail closed: ABLIT=1 never boots on stock o_proj.
+ensure_ablit_transplant() {
+    local -a fetch=(env "ABLIT_LAYERS=$ABLIT_LAYERS" "ABLIT_DONOR=${ABLIT_DONOR:-}"
+        "ABLIT_DONOR_REVISION=${ABLIT_DONOR_REVISION:-}"
+        python3 "$SCRIPT_DIR/ablit/fetch_transplant.py")
+    "${fetch[@]}" --check && return 0
+    [ "$ABLIT_AUTO_FETCH" = "1" ] \
+        || die "ABLIT=1 but the transplant tensors are missing — run: python3 ablit/fetch_transplant.py (or set ABLIT_AUTO_FETCH=1)"
+    log "ablit: fetching the pinned donor o_proj tensors (~2.6 GiB, range requests, resumable) ..."
+    "${fetch[@]}" || die "ablit transplant fetch failed — re-run to resume"
+    "${fetch[@]}" --check || die "ablit transplant still incomplete after fetch"
 }
 
 # ------------------------------ image --------------------------------------
@@ -940,7 +968,7 @@ set -euo pipefail
 say() { echo "[glm53-exl3-head] $*"; }
 
 ARGS=(
-    --served-model-name "${SERVED_MODEL_NAME}"
+    --served-model-name "${SERVED_MODEL_NAME}" ${SERVED_MODEL_ALIASES:-}
     --host 0.0.0.0
     --port "${PORT}"
     --tensor-parallel-size "${TP}"
@@ -1026,7 +1054,7 @@ if [ -f /opt/glm53/patch_ablit.py ]; then
     python3 /opt/glm53/patch_ablit.py
 fi
 if [ "${ABLIT:-0}" = "1" ]; then
-    say "ablit: o_proj orthogonalization ON (method=${ABLIT_METHOD:-auto} direction=${ABLIT_DIRECTION:-dealign} layers=${ABLIT_LAYERS:-15-45} alpha=${ABLIT_ALPHA:-3.0})"
+    say "ablit: o_proj edit ON (method=${ABLIT_METHOD:-auto} layers=${ABLIT_LAYERS:-15-43,45})"
 else
     say "ablit: off — stock o_proj weights"
 fi
@@ -1040,7 +1068,7 @@ set -euo pipefail
 say() { echo "[glm53-exl3-worker] $*"; }
 
 ARGS=(
-    --served-model-name "${SERVED_MODEL_NAME}"
+    --served-model-name "${SERVED_MODEL_NAME}" ${SERVED_MODEL_ALIASES:-}
     --host 0.0.0.0
     --port "${PORT}"
     --tensor-parallel-size "${TP}"
@@ -1125,7 +1153,7 @@ if [ -f /opt/glm53/patch_ablit.py ]; then
     python3 /opt/glm53/patch_ablit.py
 fi
 if [ "${ABLIT:-0}" = "1" ]; then
-    say "ablit: o_proj orthogonalization ON (method=${ABLIT_METHOD:-auto} direction=${ABLIT_DIRECTION:-dealign} layers=${ABLIT_LAYERS:-15-45} alpha=${ABLIT_ALPHA:-3.0})"
+    say "ablit: o_proj edit ON (method=${ABLIT_METHOD:-auto} layers=${ABLIT_LAYERS:-15-43,45})"
 else
     say "ablit: off — stock o_proj weights"
 fi
@@ -1164,8 +1192,11 @@ launch_cluster() {
     [ -f "$CACHE_RESET_PATCH_HOST" ] || die "missing $CACHE_RESET_PATCH_HOST"
     scp -q -o BatchMode=yes "$CACHE_RESET_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_cache_reset.py"
 
-    worker_ssh "rm -rf /tmp/glm53-ablit"
-    scp -q -r -o BatchMode=yes "$SCRIPT_DIR/ablit" "${WORKER_SSH}:/tmp/glm53-ablit"
+    # rsync, not scp -r: the ~2.6 GiB transplant moves only when it changed,
+    # and only with ABLIT=1 (the hook is a no-op otherwise).
+    local -a ablit_excl=(--exclude '__pycache__/')
+    [ "$ABLIT" = "1" ] || ablit_excl+=(--exclude 'transplant/')
+    rsync -a --delete "${ablit_excl[@]}" "$SCRIPT_DIR/ablit/" "${WORKER_SSH}:/tmp/glm53-ablit/"
     scp -q -o BatchMode=yes "$SCRIPT_DIR/overlay/ablit_runtime.py" "${WORKER_SSH}:/tmp/glm53-ablit_runtime.py"
     scp -q -o BatchMode=yes "$SCRIPT_DIR/overlay/patch_ablit.py" "${WORKER_SSH}:/tmp/patch_ablit.py"
 
@@ -1227,7 +1258,7 @@ launch_cluster() {
 
     local serve_env=""
     local v
-    for v in SERVED_MODEL_NAME PORT TP NNODES HEAD_IP MASTER_PORT QUANTIZATION \
+    for v in SERVED_MODEL_NAME SERVED_MODEL_ALIASES PORT TP NNODES HEAD_IP MASTER_PORT QUANTIZATION \
              MAX_MODEL_LEN GPU_MEM_UTIL MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS \
              KV_CACHE_DTYPE MTP_TOKENS SPEC_METHOD DFLASH_TOKENS DFLASH_MODEL_DIR \
              DFLASH_DRAFT_TP \
@@ -1307,6 +1338,7 @@ launch_cluster() {
         -e NCCL_IB_GID_INDEX="$HEAD_GID" \
         -e VLLM_HOST_IP="$HEAD_IP" \
         -e SERVED_MODEL_NAME="$SERVED_MODEL_NAME" \
+        -e SERVED_MODEL_ALIASES="$SERVED_MODEL_ALIASES" \
         -e PORT="$PORT" -e TP="$TP" -e NNODES="$NNODES" \
         -e HEAD_IP="$HEAD_IP" -e MASTER_PORT="$MASTER_PORT" \
         -e QUANTIZATION="$QUANTIZATION" \
@@ -1424,7 +1456,7 @@ on_ready() {
     log "======================================================================"
     log "GLM-5.3-Flash EXL3 is UP (TP=${TP}, nnodes=${NNODES})"
     log "  endpoints  : http://127.0.0.1:${PORT}/v1   (LAN: ${HEAD_IP}:${PORT})"
-    log "  model name : ${SERVED_MODEL_NAME}"
+    log "  model name : ${SERVED_MODEL_NAME}${SERVED_MODEL_ALIASES:+ (aliases: ${SERVED_MODEL_ALIASES})}"
     log "  weights    : ${MODEL}  quant=${QUANTIZATION}  kv=${KV_CACHE_DTYPE}"
     local vision=on
     [ "${LANGUAGE_MODEL_ONLY}" = "1" ] && vision=off
@@ -1432,7 +1464,10 @@ on_ready() {
     [ "$SPEC_METHOD" = "dflash" ] && spec="DFlash2 k=${DFLASH_TOKENS} (${DFLASH_MODEL})"
     [ "$SPEC_METHOD" = "none" ] && spec=off
     local ablit="off (stock weights)"
-    [ "$ABLIT" = "1" ] && ablit="ON method=${ABLIT_METHOD} direction=${ABLIT_DIRECTION} layers=${ABLIT_LAYERS} alpha=${ABLIT_ALPHA}"
+    if [ "$ABLIT" = "1" ]; then
+        ablit="ON method=${ABLIT_METHOD} layers=${ABLIT_LAYERS}"
+        [ "$ABLIT_METHOD" = "proj" ] && ablit+=" direction=${ABLIT_DIRECTION} alpha=${ABLIT_ALPHA}"
+    fi
     log "  features   : tools=glm47+auto, reasoning=glm45, spec=${spec}, vision=${vision}, ablit=${ablit}"
     local auth_line="none (VLLM_API_KEY empty)"
     if [ -n "${VLLM_API_KEY:-}" ]; then

@@ -104,6 +104,8 @@ def check_parse_layers() -> None:
     assert ablit.parse_layers("15-45") == list(range(15, 46))
     assert ablit.parse_layers("15,17-19") == [15, 17, 18, 19]
     assert ablit.parse_layers("2-44") == list(range(2, 45))
+    # published default since 2026-09-27: L44 stays a stock anchor
+    assert ablit.parse_layers(ablit.DEFAULT_LAYERS) == list(range(15, 44)) + [45]
     for bad in ("45-15", "abc", "", "15-,-20"):
         try:
             ablit.parse_layers(bad)
@@ -385,21 +387,44 @@ def check_transplant(tmp_root: str) -> None:
     else:
         print("transplant CUDA device-mismatch skip (no GPU)")
 
-    # auto fallback when transplant dir empty -> proj path needs a direction
+    # default layers under auto: L44 keeps its stock weight, 45 (MTP) edited
     os.environ["ABLIT_METHOD"] = "auto"
-    os.environ["ABLIT_DIR"] = str(tmp_root)
+    os.environ.pop("ABLIT_LAYERS", None)
+    m_def = _fake_model(with_mtp=True)
+    stock44 = m_def.layers[44].self_attn.o_proj.weight.detach().clone()
+    rep_def = ablit.maybe_apply(m_def)
+    assert rep_def["edited_layers"] == list(range(15, 44)) + [45], rep_def["edited_layers"]
+    assert torch.equal(m_def.layers[44].self_attn.o_proj.weight, stock44)
+
+    # a corrupt / partial donor copy must refuse to load, not serve garbage
+    good = (tdir / "L20.bin").read_bytes()
+    bad = bytearray(good)
+    bad[0] ^= 0xFF
+    (tdir / "L20.bin").write_bytes(bytes(bad))
+    try:
+        ablit.maybe_apply(_fake_model(with_mtp=True))
+    except ablit.AblitError as exc:
+        assert "sha256 mismatch" in str(exc), exc
+    else:
+        raise AssertionError("corrupt transplant tensor was accepted")
+    (tdir / "L20.bin").write_bytes(good)
+
+    # auto never falls back to proj: missing tensors fail loud even though a
+    # direction file would make proj "work" on near-stock weights
+    os.environ["ABLIT_DIRECTION"] = str(ABLIT_DIR / ablit.DIRECTION_FILES["dealign"])
     try:
         os.remove(tdir / "MANIFEST.json")
         for L in range(15, 46):
             (tdir / f"L{L}.bin").unlink()
         ablit.maybe_apply(_fake_model(with_mtp=False))
-    except ablit.AblitError:
-        pass  # falls to proj path with no direction file -> loud
+    except ablit.AblitError as exc:
+        assert "not a fallback" in str(exc), exc
     else:
-        raise AssertionError("auto fallback without direction should fail loud")
-    for k in ("ABLIT", "ABLIT_DIR", "ABLIT_METHOD", "ABLIT_LAYERS", "ABLIT_INCLUDE_MTP"):
+        raise AssertionError("auto without transplant tensors must fail loud")
+    for k in ("ABLIT", "ABLIT_DIR", "ABLIT_METHOD", "ABLIT_LAYERS", "ABLIT_INCLUDE_MTP",
+              "ABLIT_DIRECTION"):
         os.environ.pop(k, None)
-    print("transplant OK (byte-copy, TP shard slice, deltas, auto fallback)")
+    print("transplant OK (byte-copy, TP shard slice, deltas, L44 anchor, sha256, no proj fallback)")
 
 
 def main() -> None:

@@ -12,15 +12,19 @@ are preserved exactly; the component along ``r`` is scaled by ``1 - alpha``
 (alpha > 1 over-projects, which is what the published recipe uses).
 
 METHOD (ABLIT_METHOD=auto | transplant | proj):
-  transplant — replace the stock o_proj weights L15-45 (incl. the checkpoint
-    MTP block's, layer 45) with the donor tensors fetched by
+  transplant — replace the stock o_proj weights L15-43 + the checkpoint MTP
+    block's (layer 45) with the donor tensors fetched by
     ablit/fetch_transplant.py into ablit/transplant/ (raw bf16 + MANIFEST.json).
-    This is the published "dealign-oproj-transplant" edit — a byte-copy from
-    dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4 into the stock body. Direction
-    orthogonalization does NOT work on this model (the published directions
-    are statistically random vs stock o_proj — measured), so transplant is
-    the only effective mode; "auto" prefers it when the tensors are present.
-  proj — the classic orthogonalization below. Kept for custom directions.
+    This is the published "altered Dealign" edit — a byte-copy from
+    dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4 into the stock body. L44 stays
+    stock since the 2026-09-27 recipe (donor L44 rel_l2 0.74, garble risk).
+    Direction orthogonalization does NOT work on this model (the published
+    directions are statistically random vs stock o_proj — measured), so
+    transplant is the only effective mode. "auto" means transplant and fails
+    loud when the tensors are missing — it never falls back to proj, which
+    would serve near-stock weights under an ABLIT=1 banner.
+  proj — the classic orthogonalization below. Explicit opt-in only, kept for
+    custom directions.
 
 TP notes: o_proj is a RowParallelLinear — vLLM shards the *input* dim, the
 4096 output rows are replicated on every rank. The edit only touches rows,
@@ -38,23 +42,24 @@ Artifacts (shipped in ``ablit/`` and mounted at /opt/glm53/ablit):
   refusal_direction_glm53_dealign_late.pt     published dealign direction
   refusal_direction_glm53_bf_oproj.pt         blackfrost direction (alpha_ref 3.0)
 
-Source: drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock
-(published method "dealign-oproj-transplant": layers 15-45 edited, 0-14 kept
-as stock safety anchors, MTP block included).
+Source: drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45 (formerly
+...-ablit-l15-45-anchorstock; published "altered Dealign": layers 15-43 + MTP
+45 edited, 0-14 and 44 kept stock as safety anchors).
 
 Env knobs (see .env.example):
   ABLIT=1                  enable (default off — hook is a no-op)
   ABLIT_DIR                artifact dir (default /opt/glm53/ablit)
-  ABLIT_METHOD             auto | transplant | proj (default auto: transplant
-                           when ablit/transplant/ is populated, else proj)
+  ABLIT_METHOD             auto | transplant | proj (default auto = transplant;
+                           proj only when set explicitly)
   ABLIT_DIRECTION          dealign | bf_oproj | /path/to/dir.pt (default dealign)
-  ABLIT_LAYERS             inclusive ranges, e.g. "15-45" or "15,17-19"
+  ABLIT_LAYERS             inclusive ranges (default "15-43,45")
   ABLIT_ALPHA              projection scale (default 3.0)
   ABLIT_INCLUDE_MTP        also edit the checkpoint MTP block when it exists
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -91,6 +96,8 @@ except Exception:  # standalone (tests)
 
 DEFAULT_ABLIT_DIR = "/opt/glm53/ablit"
 TRANSPLANT_SUBDIR = "transplant"
+# Published recipe since 2026-09-27: L44 stays stock (donor rel_l2 0.74).
+DEFAULT_LAYERS = "15-43,45"
 
 DIRECTION_FILES = {
     "dealign": "refusal_direction_glm53_dealign_late.pt",
@@ -307,6 +314,14 @@ def load_transplant_tensors(
                 "— re-run ablit/fetch_transplant.py")
         if info["dtype"] != "BF16":
             raise AblitError(f"transplant L{L}: unsupported dtype {info['dtype']}")
+        want_sha = info.get("sha256")
+        if not want_sha:
+            raise AblitError(f"transplant manifest has no sha256 for L{L} "
+                             "— re-run ablit/fetch_transplant.py")
+        if hashlib.sha256(raw).hexdigest() != want_sha:
+            raise AblitError(
+                f"transplant L{L}: sha256 mismatch (corrupt or partial copy) "
+                "— re-run ablit/fetch_transplant.py")
         t = torch.frombuffer(bytearray(raw), dtype=torch.bfloat16).reshape(
             tuple(info["shape"]))
         out[L] = t
@@ -384,22 +399,18 @@ def maybe_apply(model: Any) -> dict[str, Any] | None:
         return None
 
     ablit_dir = os.environ.get("ABLIT_DIR") or DEFAULT_ABLIT_DIR
-    layers_spec = os.environ.get("ABLIT_LAYERS") or "15-45"
+    layers_spec = os.environ.get("ABLIT_LAYERS") or DEFAULT_LAYERS
     include_mtp = env_flag("ABLIT_INCLUDE_MTP", True)
     method = (os.environ.get("ABLIT_METHOD") or "auto").strip().lower()
     layers = parse_layers(layers_spec)
 
     if method in ("auto", "transplant"):
         tdir = Path(ablit_dir) / TRANSPLANT_SUBDIR
-        have_transplant = (tdir / "MANIFEST.json").is_file() and (
-            method == "transplant"
-            or any((tdir / f"L{L}.bin").is_file() for L in layers)
-        )
-        if have_transplant:
+        if (tdir / "MANIFEST.json").is_file():
             if method == "auto":
                 logger.info("ablit: ABLIT_METHOD=auto -> transplant "
-                            "(ablit/transplant/ present; direction proj does "
-                            "not align with stock o_proj on this model)")
+                            "(direction proj does not align with stock o_proj "
+                            "on this model)")
             donors = load_transplant_tensors(ablit_dir, layers)
             report = apply_transplant(model, donors, layers, include_mtp)
             if not report["edited_layers"] and not report["mtp_edited"]:
@@ -418,14 +429,15 @@ def maybe_apply(model: Any) -> dict[str, Any] | None:
                 len(report["skipped"]),
             )
             return report
-        if method == "transplant":
-            raise AblitError(
-                "ABLIT_METHOD=transplant but ablit/transplant/ is missing or "
-                "empty — run: python3 ablit/fetch_transplant.py")
-        logger.info("ablit: ABLIT_METHOD=auto -> proj (no ablit/transplant/ "
-                    "tensors found — falling back to direction orthogonalization)")
+        raise AblitError(
+            f"ABLIT_METHOD={method} but ablit/transplant/ is missing or empty "
+            "— run: python3 ablit/fetch_transplant.py (start.sh does it when "
+            "ABLIT_AUTO_FETCH=1). Direction proj is not a fallback: set "
+            "ABLIT_METHOD=proj explicitly for a custom direction")
+    if method != "proj":
+        raise AblitError(f"ABLIT_METHOD={method!r} not one of auto | transplant | proj")
 
-    # ABLIT_METHOD=proj (or auto fallback): direction orthogonalization
+    # ABLIT_METHOD=proj: direction orthogonalization
     direction = os.environ.get("ABLIT_DIRECTION") or "dealign"
     try:
         alpha = float(os.environ.get("ABLIT_ALPHA") or "3.0")

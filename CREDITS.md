@@ -15,5 +15,26 @@ Pour la lane `vllm-exl3/` (branche `dev`) :
 - IncoAI pour le drafter GLM-5.3-Flash-DFlash2 (CC BY-NC-ND 4.0, recherche/évaluation).
 - malaiwah pour le panel KLD indépendant (weights-vs-official), socle de la décision produit EXL3.
 - vLLM et les auteurs des backports #52805/#53046 pour le runtime speculative/grammaire.
+- drowzeys pour la recette d'abliteration « altered Dealign » (L15–43 + MTP 45, ancres L0–14 et L44 ; MIT) et dealignai pour les tenseurs `o_proj` donneurs de `GLM-5.3-Flash-UNCENSORED-NVFP4` (MIT), utilisés par `ABLIT=1`.
 
 Cette recipe réimplémente et adapte ces idées à GLM-5.3-Flash ; les artefacts upstream conservent leurs propres licences.
+
+## Politique de licence du vendor `vllm-exl3/`
+
+Le code vendoré dans `vllm-exl3/` provient de
+[MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)
+au commit `e25aa70` (2026-09-02), publié sous **MIT** (`vllm-exl3/LICENSE`).
+L'amont a été relicencié en **AGPL-3.0** le 2026-09-07 (commit `cf0f430`).
+Conséquences pour ce dépôt, distribué sous MIT :
+
+- aucun code amont postérieur à `cf0f430^` n'entre dans `vllm-exl3/` sans
+  décision de licence explicite (relicencier ce répertoire en AGPL, ou
+  réimplémenter indépendamment) ;
+- les rapports d'issues, mesures et choix de configuration publiés en amont
+  restent utilisables comme faits ; seul le code est concerné ;
+- la recette successeur
+  [GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold)
+  est sous Apache-2.0, compatible avec ce dépôt sous réserve de conserver son
+  avis de licence et ses notices.
+
+Avant tout sync, `vllm-exl3/scripts/check-vendor-license.sh <ref>` refuse (code 1) une ref dont la licence n'est pas MIT.

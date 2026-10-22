@@ -574,6 +574,26 @@ API : `http://<HEAD_IP>:8888/v1`, modèle `GLM-5.3-Flash-EXL3`. Au premier run,
 Penser à `chat_template_kwargs: {"enable_thinking": false}` pour les petits
 budgets de tokens.
 
+**Variante abliterated (une ligne)** — la lane sert aussi GLM-5.3-Flash sans
+refus de sécurité, par simple interrupteur :
+
+```bash
+ABLIT=1 ./start.sh restart     # ou ABLIT=1 dans vllm-exl3/.env
+```
+
+Au premier démarrage, le head télécharge les ~2,6 GiB de tenseurs `o_proj`
+du donneur épinglé (Dealign, commit `745aac2f`), les copie sur le worker, et
+les deux rangs les substituent au chargement : aucun poids réécrit sur disque,
+aucun rebuild, `ABLIT=0` revient au stock au redémarrage suivant. La recette
+suit la publication du 27/09 : couches 15–43 + bloc MTP 45 éditées, 0–14
+**et 44** laissées stock. Le lancement est fail-closed : révision du donneur
+épinglée, sha256 vérifié sur chaque rang, aucun repli silencieux sur une
+méthode inefficace. Le modèle est servi sous l'id
+`GLM-5.3-Flash-EXL3-Ablit`, et l'id stock reste accepté en alias pour que les
+clients existants continuent de marcher. Les mesures de qualité ci-dessus ont
+été faites sans ablit : relancez `tests/bench_decode.py` après activation.
+Détails, garanties et réglages : [vllm-exl3/README.md](vllm-exl3/README.md#abliteration-ablit1).
+
 **À ne pas faire sur cette lane** : backend `--moe-backend marlin`, poids
 NVFP4, KV bf16 ou NVFP4 (`fp8_ds_mla` est la seule voie sparse-MLA sur SM12x) ;
 épingler `TRITON_ATTN` pour le drafter (effondrement d'acceptation,

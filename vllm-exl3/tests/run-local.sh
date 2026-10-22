@@ -15,7 +15,7 @@ bad()  { fail=$((fail + 1)); printf '[vllm-exl3-tests]  FAIL %s\n' "$1"; }
 
 # 1. shell syntax
 if bash -n start.sh && bash -n stop.sh && bash -n download.sh \
-   && bash -n scripts/boot-shape-warmup.sh; then ok "bash -n (start/stop/download/warmup)"; else bad "bash -n"; fi
+   && bash -n scripts/boot-shape-warmup.sh && bash -n scripts/check-vendor-license.sh; then ok "bash -n (start/stop/download/warmup/vendor-license)"; else bad "bash -n"; fi
 
 # 2. python compile of everything importable
 if python3 -m py_compile tests/bench_decode.py tests/bench_prefix_cache.py \
@@ -37,12 +37,22 @@ else
 fi
 
 # 4. per-rank GID wiring (PR #26) must reach both docker runs exactly once
-h=$(grep -c 'NCCL_IB_GID_INDEX=$HEAD_GID' start.sh || true)
+h=$(grep -c 'NCCL_IB_GID_INDEX="$HEAD_GID"' start.sh || true)
 w=$(grep -c "NCCL_IB_GID_INDEX='\$WORKER_GID'" start.sh || true)
 if [ "$h" = "1" ] && [ "$w" = "1" ]; then ok "per-rank GID wiring (head+worker)"; else bad "per-rank GID wiring h=$h w=$w"; fi
 
+# 4c. ABLIT=1 one-switch wiring: -Ablit id + stock alias on both ranks, fail-closed fetch
+a1=$(grep -c '\-\-served-model-name "${SERVED_MODEL_NAME}" ${SERVED_MODEL_ALIASES:-}' start.sh || true)
+a2=$(grep -c 'ensure_ablit_transplant$' start.sh || true)
+a3=$(grep -c 'ABLIT_LAYERS="${ABLIT_LAYERS:-15-43,45}"' start.sh || true)
+if [ "$a1" = "2" ] && [ "$a2" = "1" ] && [ "$a3" = "1" ]; then
+    ok "ABLIT wiring (model id alias x2, transplant preflight, L44 stock default)"
+else
+    bad "ABLIT wiring alias=$a1 (want 2) preflight=$a2 (want 1) layers=$a3 (want 1)"
+fi
+
 # 5. vendor pure-python tests
-for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination test_suppress_stops; do
+for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination test_suppress_stops test_ablit_fetch; do
     if python3 "tests/${t}.py" >/dev/null 2>&1; then ok "$t"; else bad "$t"; fi
 done
 

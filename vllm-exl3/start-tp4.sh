@@ -261,14 +261,15 @@ EXL3_FAT_BATCHED="${EXL3_FAT_BATCHED:-0}"
 EXL3_FAT_KERNEL="${EXL3_FAT_KERNEL:-1}"
 
 # --- abliteration (ablit/) --------------------------------------------------
-# Load-time o_proj orthogonalization (overlay/ablit_runtime.py). Published
-# recipe: layers 15-45 edited with the dealign direction, 0-14 stay stock
-# safety anchors, MTP block included. 0 = stock weights. Applied identically
-# on both TP ranks; the DFlash2 drafter is never touched.
+# Load-time o_proj transplant (overlay/ablit_runtime.py). Published recipe
+# (2026-09-27): layers 15-43 + MTP 45 transplanted, 0-14 and 44 stay stock
+# safety anchors. 0 = stock weights. Applied identically on all TP ranks; the
+# DFlash2 drafter is never touched. TP4 does not auto-fetch: run
+# `python3 ablit/fetch_transplant.py` once (or one ABLIT=1 ./start.sh boot).
 ABLIT="${ABLIT:-0}"
 ABLIT_METHOD="${ABLIT_METHOD:-auto}"           # auto | transplant | proj
 ABLIT_DIRECTION="${ABLIT_DIRECTION:-dealign}"  # dealign | bf_oproj | /path/dir.pt
-ABLIT_LAYERS="${ABLIT_LAYERS:-15-45}"          # inclusive; 45 = checkpoint MTP block
+ABLIT_LAYERS="${ABLIT_LAYERS:-15-43,45}"       # inclusive; 45 = checkpoint MTP block
 ABLIT_ALPHA="${ABLIT_ALPHA:-3.0}"              # 1.0 = plain projection, >1 over-projects
 ABLIT_INCLUDE_MTP="${ABLIT_INCLUDE_MTP:-1}"
 
@@ -1178,7 +1179,7 @@ if [ -f /opt/glm53/patch_ablit.py ]; then
     python3 /opt/glm53/patch_ablit.py
 fi
 if [ "${ABLIT:-0}" = "1" ]; then
-    say "ablit: o_proj orthogonalization ON (method=${ABLIT_METHOD:-auto} direction=${ABLIT_DIRECTION:-dealign} layers=${ABLIT_LAYERS:-15-45} alpha=${ABLIT_ALPHA:-3.0})"
+    say "ablit: o_proj edit ON (method=${ABLIT_METHOD:-auto} layers=${ABLIT_LAYERS:-15-43,45})"
 else
     say "ablit: off — stock o_proj weights"
 fi
@@ -1274,7 +1275,7 @@ if [ -f /opt/glm53/patch_ablit.py ]; then
     python3 /opt/glm53/patch_ablit.py
 fi
 if [ "${ABLIT:-0}" = "1" ]; then
-    say "ablit: o_proj orthogonalization ON (method=${ABLIT_METHOD:-auto} direction=${ABLIT_DIRECTION:-dealign} layers=${ABLIT_LAYERS:-15-45} alpha=${ABLIT_ALPHA:-3.0})"
+    say "ablit: o_proj edit ON (method=${ABLIT_METHOD:-auto} layers=${ABLIT_LAYERS:-15-43,45})"
 else
     say "ablit: off — stock o_proj weights"
 fi

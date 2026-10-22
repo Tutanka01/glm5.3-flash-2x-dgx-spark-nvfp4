@@ -108,7 +108,7 @@ same path as the compact-64 fp8 serve (not NVFP4 KV).
 | Image | `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3` FROM `vllm/vllm-openai:glm53-flash-arm64-cu130@sha256:905c0293…` (arm64, CUDA 13.0) |
 | Executor | `mp`, `--nnodes 2`, `--tensor-parallel-size 2` |
 | Head | this machine, `HEAD_IP=10.0.0.1`, container `glm53-exl3-head` |
-| Worker | `WORKER_USER@WORKER_IP` (this kit: `zurih@10.0.0.2`), `--headless`, `glm53-exl3-worker` |
+| Worker | `WORKER_USER@WORKER_IP` (e.g. `user@10.0.0.2`), `--headless`, `glm53-exl3-worker` |
 | Fabric | CX7 QSFP: `enp1s0f1np1`/`rocep1s0f1` ↔ `enp1s0f0np0`/`rocep1s0f0`. Image NCCL (`USE_HOST_NCCL=0`) |
 | Attention | `FLASHINFER_MLA_SPARSE_SM120` (NoPE MLA padded into GLM_NSA 576-wide) |
 | KV | `--kv-cache-dtype fp8` → packed **`fp8_ds_mla`** (target). Draft DFlash2 KV is `auto`/bf16. Latest validated 7168/rightsize pool: **1,243,902** tokens / **1.24×** at 1M. `--enable-prefix-caching` (block-aligned hits; see Prefix caching) |
@@ -119,7 +119,7 @@ same path as the compact-64 fp8 serve (not NVFP4 KV).
 | Tools / reasoning | `--tool-call-parser glm47 --enable-auto-tool-choice --reasoning-parser glm45` |
 | Graphs | on (`ENFORCE_EAGER=0`) — MTP capture `1 2 3 4 6 8 12`; DFlash2 capture `1 2 4 8 16 24 32` |
 | Vision | on (`LANGUAGE_MODEL_ONLY=0`) — image + video, `--limit-mm-per-prompt {image:4,video:1}`, `--skip-mm-profiling` |
-| Ablit | **off** (`ABLIT=0`). Stock `o_proj`. Set `ABLIT=1` to enable; see [Abliteration](#abliteration-ablit1) |
+| Ablit | **off** (`ABLIT=0`). Stock `o_proj`. `ABLIT=1` serves the abliterated variant; see [Abliteration](#abliteration-ablit1) |
 
 Kernels: `TORCH_CUDA_ARCH_LIST=12.1a`. ExLlamaV3 pin `c5d9c657` (0.0.43) exposes
 `exl3_moe` / `exl3_moe_max_concurrency`; aarch64 CPU allreduce stubs in
@@ -127,66 +127,83 @@ Kernels: `TORCH_CUDA_ARCH_LIST=12.1a`. ExLlamaV3 pin `c5d9c657` (0.0.43) exposes
 
 ## Abliteration (`ABLIT=1`)
 
-**Off by default.** Unset or `ABLIT=0` serves stock `o_proj`. `ABLIT=1` is
-opt-in refusal-direction ablation at weight-load on top of the EXL3 checkpoint
-— nothing on disk is rewritten.
-
-Artifacts live in `ablit/` (from
-[drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock](https://huggingface.co/drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock),
-method `dealign-oproj-transplant`: layers **15–45** edited, **0–14 stock**
-safety anchors, MTP block included).
-
-**Method — `ABLIT_METHOD=transplant` (default via `auto`).** The published
-checkpoint's `o_proj` L15–45 are byte-copied from that recipe
-(same 120-shard layout; o_proj is native BF16 in both). Since this EXL3
-checkpoint's o_proj is byte-identical to the NVFP4 body's, replacing those
-31 tensors at load reproduces the published edit exactly. Fetched once (~2.7 GiB,
-range-requests only the o_proj tensors — no full checkpoint download):
+**Off by default.** One switch turns it on, on the command line or as one line
+in `.env`:
 
 ```bash
-python3 ablit/fetch_transplant.py      # donor is public; HF token optional
-ABLIT=1 ./start.sh restart
+ABLIT=1 ./start.sh restart        # or put ABLIT=1 in .env
 ```
 
-Fidelity checks (logged per layer): mean `rel_l2` vs stock ≈ the published
-fingerprint (`Mean Δrel 0.126`; their L44 outlier `0.74` matches our measured
-`0.737`). Their own gate: `refusal32` → 32/32 bypass on the NVFP4 stack.
+That is all: the first `ABLIT=1` start fetches the pinned donor tensors
+(~2.6 GiB, range requests, resumable), rsyncs them to the worker with the rest
+of `ablit/`, and both ranks swap the edited `o_proj` in at weight-load —
+nothing on disk is rewritten, no rebuild. `ABLIT=0` (or unset) serves stock
+weights again on the next restart.
+
+**What gets served.** The published "altered Dealign" recipe of
+[drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45](https://huggingface.co/drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45)
+(formerly `...-ablit-l15-45-anchorstock`): `self_attn.o_proj` of layers
+**15–43 + the checkpoint MTP block 45** byte-copied from
+[dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4](https://huggingface.co/dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4)
+(MIT), **L0–14 and L44 stock** as safety anchors. L44 left the recipe on
+2026-09-27: the donor's L44 sits at Δrel 0.74 from stock, a garble risk. The
+publisher's gate on that recipe: 32/32 bypass, 0 refuse, 0 garble. o_proj is
+native BF16 in both checkpoints and byte-identical between the NVFP4 body and
+this EXL3 checkpoint, so replacing those 30 tensors at load reproduces the
+published edit exactly.
+
+**Fail-closed guarantees** (the switch never lies):
+
+- the donor is pinned to Hub commit `745aac2f` (`ABLIT_DONOR_REVISION`); a
+  manifest from another revision counts as stale and is fetched again;
+- each tensor's sha256 is checked against the manifest on both ranks at load —
+  a corrupt or partial copy refuses to boot;
+- `ABLIT_METHOD=auto` means transplant and **never falls back** to direction
+  projection, which leaves the model near-stock on GLM-5.3-Flash (see below);
+  missing tensors with `ABLIT_AUTO_FETCH=0` stop the start instead;
+- the API serves the edited weights as **`GLM-5.3-Flash-EXL3-Ablit`** and keeps
+  `GLM-5.3-Flash-EXL3` as an alias: existing client configs keep working,
+  while `/v1/models` and every response's `model` field say which weights
+  answered (`ABLIT_MODEL_SUFFIX=` keeps the stock id only).
 
 **Why not direction orthogonalization (`ABLIT_METHOD=proj`)?** Measured: the
 shipped direction vectors (`refusal_direction_glm53_*.pt`) are statistically
 random against the stock o_proj (max |rᵀW| 0.084 vs 0.084 for random unit
 vectors; mean identical). The publisher's own table shows projection variants
 (Blackfrost V / Dealign V SVD) topping out at 9/32 bypass — only the byte-copy
-hits 32/32. `proj` stays available for custom directions you extract yourself:
+hits 32/32. `proj` stays available, explicitly, for custom directions you
+extract yourself:
 
 ```text
 W' = (I - alpha * r rᵀ) W      # ABLIT_ALPHA, default 3.0 (alpha_ref)
 ```
 
 Mechanics (both methods): o_proj is native BF16 and `RowParallelLinear` shards
-only the input dim, so edits are per-rank row-space ops with no collectives —
-identical result on both TP ranks. Applied by `overlay/ablit_runtime.py` at
-the end of `Glm5NextModel.load_weights` / `Glm5NextMTP.load_weights`, before
-CUDA-graph capture. The DFlash2 drafter is never touched (for the checkpoint's
-own MTP block, `ABLIT_INCLUDE_MTP=1` transplants its o_proj too — the
-publisher found a stock MTP draft head keeps proposing refusals).
-
-Disable with `ABLIT=0` (or unset) — hook is a no-op, stock weights. No
-rebuild: artifacts + hook are bind-mounted into both containers every start.
+only the input dim, so edits are per-rank ops with no collectives — identical
+result on both TP ranks. Applied by `overlay/ablit_runtime.py` at the end of
+`Glm5NextModel.load_weights` / `Glm5NextMTP.load_weights`, before CUDA-graph
+capture; the per-layer `rel_l2` vs stock is logged. The DFlash2 drafter is
+never touched (for the checkpoint's own MTP block, `ABLIT_INCLUDE_MTP=1`
+transplants its o_proj too — the publisher found a stock MTP draft head keeps
+proposing refusals).
 
 | Knob | Default | What |
 |---|---|---|
-| `ABLIT` | `0` (off) | `1` = apply the o_proj edit at load (both ranks). Default and unset = stock weights |
-| `ABLIT_METHOD` | `auto` | `auto` = transplant when `ablit/transplant/` is populated, else `proj` \| `transplant` \| `proj` |
-| `ABLIT_LAYERS` | `15-45` | inclusive range; `45` is the checkpoint MTP block |
-| `ABLIT_ALPHA` | `3.0` | proj-only: projection scale (`1.0` = plain projection) |
-| `ABLIT_DIRECTION` | `dealign` | proj-only: `dealign` \| `bf_oproj` \| path to a custom direction `.pt` |
+| `ABLIT` | `0` (off) | `1` = serve the abliterated variant (both ranks). The only knob most kits need |
+| `ABLIT_AUTO_FETCH` | `1` | fetch missing/stale donor tensors at start; `0` = refuse to start instead |
+| `ABLIT_MODEL_SUFFIX` | `-Ablit` | suffix of the served model id; the stock id stays an alias. Empty = stock id only |
+| `ABLIT_LAYERS` | `15-43,45` | inclusive ranges; `45` is the checkpoint MTP block |
+| `ABLIT_METHOD` | `auto` | `auto` = `transplant` \| `proj` (explicit opt-in, custom directions) |
+| `ABLIT_DONOR` / `ABLIT_DONOR_REVISION` | Dealign / `745aac2f…` | donor repo and pinned Hub commit |
 | `ABLIT_INCLUDE_MTP` | `1` | also edit the MTP block's o_proj when it loads (`SPEC_METHOD=mtp`) |
+| `ABLIT_ALPHA` / `ABLIT_DIRECTION` | `3.0` / `dealign` | proj-only |
 
-Caveats: the KLD quality panel above was measured **without** ablit; expect
-behavioral drift and re-run `tests/bench_decode.py` after enabling (DFlash2
-acceptance can shift). Donor licensing: Dealign weights carry their own
-terms — see the donor card before redistributing anything derived.
+Caveats: the KLD panel and the A/B quality row were measured **without**
+ablit; expect behavioural drift and re-run `tests/bench_decode.py` after
+enabling (DFlash2 acceptance can shift). Safety refusals are removed: the
+model answers what the client sends, so keep the API key, network filtering
+and any filtering your use needs on your side. Licences: Dealign and the
+recipe are MIT, inherited from Z.ai's GLM-5.3-Flash licence.
 
 ## Why the overlay exists
 
@@ -466,7 +483,7 @@ Needs: Docker (no sudo) on both nodes, passwordless SSH head → worker,
 `hf` / `huggingface-cli` + `curl` + `rsync` on the head, ~180 GiB free per
 node for the first download. The GHCR image is public; login is only needed
 if you hit anonymous pull rate limits (`GHCR_TOKEN` + `GHCR_USER`).
-Mixed OS accounts: set `WORKER_USER` (this kit uses `zurih` on spark2).
+Mixed OS accounts: set `WORKER_USER` (the account name on the worker).
 
 NCCL cannot use the `10.0.0.x` loopback aliases — leave the CX7 pins unless
 your cabling differs. `ncclCommInitRank` hangs without them.
@@ -509,12 +526,7 @@ that are now documented/enforced:
 | `GHCR_TOKEN` / `GHCR_USER` | *(unset)* | optional login if anonymous GHCR pull is rate-limited |
 | `PORT` | `8888` | OpenAI API on the head |
 | `VLLM_API_KEY` | *(unset)* | opt-in Bearer token for `/v1`. Empty = open API. `/health` stays keyless |
-| `ABLIT` | `0` (off) | opt-in. `1` = apply o_proj edit at load (both ranks). Unset = stock weights |
-| `ABLIT_METHOD` | `auto` | `auto` = transplant when `ablit/transplant/` is populated, else `proj` |
-| `ABLIT_LAYERS` | `15-45` | inclusive range; `45` is the checkpoint MTP block |
-| `ABLIT_DIRECTION` | `dealign` | proj-only: `dealign` \| `bf_oproj` \| path to a custom `.pt` |
-| `ABLIT_ALPHA` | `3.0` | proj-only: projection scale |
-| `ABLIT_INCLUDE_MTP` | `1` | also edit the MTP block's o_proj when it loads |
+| `ABLIT` | `0` (off) | opt-in. `1` = serve the abliterated variant as `<model>-Ablit` (tensors fetched on first use). See [Abliteration](#abliteration-ablit1) for the other `ABLIT_*` knobs |
 | `TP` / `NNODES` | `2` / `2` | do not change for this recipe |
 | `QUANTIZATION` | `exl3` | overlay method; never `marlin` |
 | `MTP_TOKENS` | `2` | MTP speculative tokens (`SPEC_METHOD=mtp`) |
@@ -586,8 +598,9 @@ After CUDA compile, Python overlay edits (`overlay/exl3.py`, tests) are a cheap 
 | `tests/test_spinwait_patch.py` | numeric contract, exact patch, idempotence, drift rejection, mode preservation, pyc cleanup, and launcher/build wiring |
 | `overlay/ablit_runtime.py` | load-time o_proj transplant / projection (`ABLIT=1`); no-op when off |
 | `overlay/patch_ablit.py` | install the load_weights hook; bind-mounted and run on both ranks |
-| `ablit/` | direction vectors + `LAYER_MAP.json` from drowzeys' published recipe; `fetch_transplant.py` + `transplant/` for the donor o_proj byte-copy |
-| `tests/test_ablit.py` | recipe integrity, orthogonalization math, TP-shard equivalence, transplant byte-copy + TP slice, hook gating |
+| `ablit/` | direction vectors + `LAYER_MAP.json` from drowzeys' published recipe; `fetch_transplant.py` (pinned donor, `--check`) + `transplant/` for the donor o_proj byte-copy |
+| `tests/test_ablit.py` | recipe integrity, orthogonalization math, TP-shard equivalence, transplant byte-copy + TP slice, L44 anchor, sha256 refusal, no proj fallback, hook gating (needs torch) |
+| `tests/test_ablit_fetch.py` | fetch contracts: default layers, pinned revision, `--check`, stale manifest (no torch) |
 | `scripts/boot-shape-warmup.sh` | post-`/health` DFlash2 k=7 BLOCK ladder + sampler/kpool arms |
 
 Image-build runs `EXL3_SELFCHECK_GPU=0`. `./start.sh` runs the GPU self-check
@@ -625,4 +638,5 @@ DFlash2 stays [CC BY-NC-ND 4.0](https://huggingface.co/incoai/GLM-5.3-Flash-DFla
 - **KLD panel:** [malaiwah](https://huggingface.co/malaiwah) —
   [discussion #1](https://huggingface.co/brandonmusic/GLM-5.3-Flash-tr3-4bpw/discussions/1#6a9144846b0bdba943bfe86f)
 - **Abliteration recipe / direction artifacts:** [drowzeys](https://huggingface.co/drowzeys) —
-  [keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock](https://huggingface.co/drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock)
+  [keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45](https://huggingface.co/drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45);
+  [dealignai](https://huggingface.co/dealignai) for the donor o_proj tensors

@@ -1,4 +1,8 @@
 .env.glm53
+# Backups the README suggests (cp .env.glm53 .env.glm53.before-sglang) carry
+# API_KEY too; only the example is versioned.
+.env.glm53.*
+!.env.glm53.example
 .glm53-guard-*.pid
 .glm53-guard-*.log
 *.log
@@ -7,3 +11,8 @@ __pycache__/
 results/*.json
 results/*.jsonl
 results/diagnostics/
+
+# Unrelated documents never belong in this public repo (a pentest report was
+# pushed by mistake on 2026-08-31).
+rapport_*
+*pentest*

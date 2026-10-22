@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Fetch the abliterated o_proj tensors (L15-45) from the Dealign donor repo.
+"""Fetch the abliterated o_proj tensors (L15-43 + MTP 45) from the Dealign donor.
 
 Pulls only the `self_attn.o_proj.weight` byte ranges out of the donor's 120
-safetensors shards via HTTP range-requests (~2.7 GiB instead of ~164 GiB),
-into ablit/transplant/L{NN}.bin + MANIFEST.json. Resumable: files whose
-sha256 matches the manifest are skipped.
+safetensors shards via HTTP range-requests (~2.6 GiB instead of ~164 GiB),
+into ablit/transplant/L{NN}.bin + MANIFEST.json. The donor is pinned to a
+Hub commit so every kit transplants the same bytes. Resumable: files whose
+sha256 matches the manifest of the same donor revision are skipped.
 
-Run on the head (needs `python3` + network; no torch):
-    ABLIT_DONOR=dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4 python3 ablit/fetch_transplant.py
+Run on the head (needs `python3` + network; no torch). start.sh runs it
+automatically when ABLIT=1 (ABLIT_AUTO_FETCH=1):
+    python3 ablit/fetch_transplant.py           # fetch / resume
+    python3 ablit/fetch_transplant.py --check   # offline: exit 0 if complete
     # token: HF_TOKEN env or ~/.cache/huggingface/token (donor is public; the
     # token only helps with rate limits)
 
 The ABLIT runtime (overlay/ablit_runtime.py) picks these up when
 ABLIT_METHOD=auto|transplant and replaces the stock o_proj weights at load —
-the exact published "dealign-oproj-transplant" edit (METHOD.md of
-drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-45-anchorstock).
+the published "altered Dealign" edit (METHOD.md of
+drowzeys/keys-GLM-5.3-Flash-NVFP4-ablit-l15-43-mtp-l45: L0-14 and L44 stock).
 """
 
 from __future__ import annotations
@@ -31,8 +34,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "ablit" / "transplant"
 LAYER_MAP_PATH = REPO_ROOT / "ablit" / "LAYER_MAP.json"
 
-DONOR = os.environ.get("ABLIT_DONOR", "dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4")
-BASE = f"https://huggingface.co/{DONOR}/resolve/main"
+DONOR = os.environ.get("ABLIT_DONOR") or "dealignai/GLM-5.3-Flash-UNCENSORED-NVFP4"
+# Donor commit of 2026-09-19; its o_proj bytes are unchanged since the
+# 2026-08-29 shard fixes (later commits touch only the card/template).
+REVISION = (os.environ.get("ABLIT_DONOR_REVISION")
+            or "745aac2ff0f10acf961f396df3f9418598aa7327")
+LAYERS_SPEC = os.environ.get("ABLIT_LAYERS") or "15-43,45"
+BASE = f"https://huggingface.co/{DONOR}/resolve/{REVISION}"
 TOKEN = os.environ.get("HF_TOKEN") or ""
 if not TOKEN:
     tok_file = Path.home() / ".cache/huggingface/token"
@@ -102,12 +110,63 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def main() -> None:
+def parse_layers(spec: str) -> list[int]:
+    """Same grammar as ablit_runtime.parse_layers ("15-43,45"), torch-free."""
+    layers: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        try:
+            a, b = int(lo), int(hi or lo)
+        except ValueError:
+            raise SystemExit(f"ABLIT_LAYERS: bad entry {part!r}")
+        if b < a:
+            raise SystemExit(f"ABLIT_LAYERS: inverted range {part!r}")
+        layers.update(range(a, b + 1))
+    if not layers:
+        raise SystemExit("ABLIT_LAYERS resolved to an empty set")
+    return sorted(layers)
+
+
+def load_manifest(path: Path) -> dict | None:
+    """The manifest of this donor revision, or None when absent or stale."""
+    if not path.is_file():
+        return None
+    old = json.loads(path.read_text())
+    if old.get("donor") != DONOR or old.get("donor_revision") != REVISION:
+        return None
+    return old
+
+
+def check(layers: list[int]) -> int:
+    """Offline completeness check (sizes only; ablit_runtime verifies sha256)."""
+    manifest = load_manifest(OUT_DIR / "MANIFEST.json")
+    if manifest is None:
+        print(f"ablit transplant: no manifest for {DONOR}@{REVISION[:12]}")
+        return 1
+    have = manifest.get("layers", {})
+    missing = [L for L in layers
+               if str(L) not in have
+               or not (OUT_DIR / f"L{L}.bin").is_file()
+               or (OUT_DIR / f"L{L}.bin").stat().st_size != have[str(L)]["nbytes"]]
+    if missing:
+        print(f"ablit transplant: incomplete, missing/short layers {missing}")
+        return 1
+    total = sum(have[str(L)]["nbytes"] for L in layers)
+    print(f"ablit transplant: complete ({len(layers)} tensors, {total / 1e9:.2f} GB, "
+          f"{DONOR}@{REVISION[:12]})")
+    return 0
+
+
+def main() -> int:
     lmap = json.loads(LAYER_MAP_PATH.read_text())
-    layers = sorted(e["layer"] for e in lmap["layers"]
-                    if e["role"] in ("edit", "mtp-edit"))
-    print(f"donor : {DONOR}")
-    print(f"layers: {layers[0]}..{layers[-1]} ({len(layers)} tensors)")
+    layers = parse_layers(LAYERS_SPEC)
+    if "--check" in sys.argv[1:]:
+        return check(layers)
+    print(f"donor : {DONOR}@{REVISION}")
+    print(f"layers: {LAYERS_SPEC} ({len(layers)} tensors)")
 
     # authoritative shard map from the donor's own index
     idx_url = f"{BASE}/model.safetensors.index.json"
@@ -123,18 +182,16 @@ def main() -> None:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     manifest_path = OUT_DIR / "MANIFEST.json"
-    manifest = {
-        "donor": DONOR,
-        "donor_sha": None,
-        "method": "dealign-oproj-transplant (byte-copy, o_proj L15-45 incl. MTP)",
-        "tensors": {},
-    }
-    if manifest_path.exists():
-        old = json.loads(manifest_path.read_text())
-        if old.get("donor") == DONOR:
-            manifest = old
-            print("resuming: existing manifest found")
-    manifest["layers"] = manifest.get("tensors", {})
+    manifest = load_manifest(manifest_path)
+    if manifest is not None:
+        print("resuming: manifest of this donor revision found")
+    else:
+        manifest = {
+            "donor": DONOR,
+            "donor_revision": REVISION,
+            "method": "altered-dealign-oproj-transplant (byte-copy, o_proj)",
+            "layers": {},
+        }
 
     for L in layers:
         key = f"model.language_model.layers.{L}.self_attn.o_proj.weight"
@@ -145,8 +202,8 @@ def main() -> None:
         if lmap_shard and lmap_shard != shard:
             print(f"  note: L{L} shard differs from LAYER_MAP ({shard} vs {lmap_shard}) — using donor index")
         out = OUT_DIR / f"L{L}.bin"
-        if out.is_file() and L in manifest.get("layers", {}) \
-                and manifest["layers"][L].get("sha256") == sha256(out.read_bytes()):
+        if out.is_file() and str(L) in manifest["layers"] \
+                and manifest["layers"][str(L)].get("sha256") == sha256(out.read_bytes()):
             print(f"L{L}: already fetched ({out.stat().st_size / 1e6:.0f} MB)")
             continue
 
@@ -162,7 +219,7 @@ def main() -> None:
         tmp = out.with_suffix(".tmp")
         tmp.write_bytes(data)
         tmp.replace(out)
-        manifest.setdefault("layers", {})[L] = {
+        manifest["layers"][str(L)] = {
             "shard": shard,
             "key": key,
             "dtype": meta["dtype"],
@@ -172,10 +229,13 @@ def main() -> None:
         }
         manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    ok = sum(1 for L in layers if L in manifest.get("layers", {}))
-    total = sum(m["nbytes"] for m in manifest.get("layers", {}).values())
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    ok = sum(1 for L in layers if str(L) in manifest["layers"])
+    total = sum(manifest["layers"][str(L)]["nbytes"] for L in layers
+                if str(L) in manifest["layers"])
     print(f"done: {ok}/{len(layers)} tensors, {total / 1e9:.2f} GB -> {OUT_DIR}")
+    return 0 if ok == len(layers) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
