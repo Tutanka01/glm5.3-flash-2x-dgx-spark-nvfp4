@@ -26,7 +26,7 @@ done
 ```bash
 ./stop-glm53.sh --profile 256k
 ./start-glm53.sh 256k-graphs
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 for tokens in 180000 220000 240000; do
   ./bench-long-context.py --allow-unsafe-profile --target-tokens "$tokens" \
     --cold --label "256k-graphs-${tokens}"
@@ -38,7 +38,7 @@ done
 ```bash
 ./stop-glm53.sh --profile 256k-graphs
 ./start-glm53.sh 256k-mtp
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 for tokens in 180000 220000 240000; do
   ./bench-long-context.py --allow-unsafe-profile --target-tokens "$tokens" \
     --cold --label "256k-mtp-${tokens}"
@@ -54,8 +54,8 @@ valide le SHA-256 du drafter sur les deux nœuds.
 ./stop-glm53.sh --profile 256k-mtp
 ./prepare-dflash2.sh 128k-dflash2
 ./start-glm53.sh 128k-dflash2
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 4
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 4
 ```
 
 Balayage graphes CUDA jusqu'à batch 8 :
@@ -64,7 +64,7 @@ Balayage graphes CUDA jusqu'à batch 8 :
 ./stop-glm53.sh --profile 128k-dflash2
 ./start-glm53.sh 128k-dflash2-c8
 for c in 1 2 4 5 6; do
-  ./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency "$c"
+  ../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency "$c"
 done
 ```
 
@@ -74,7 +74,7 @@ Si FA4 échoue au chargement sur SM121 :
 ./collect-glm53-report.sh --profile 128k-dflash2-c8 --label fa4-boot
 ./stop-glm53.sh --profile 128k-dflash2-c8
 ./start-glm53.sh 128k-dflash2-flashinfer
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 ```
 
 ## 5. DFlash2 sous pression 240K
@@ -104,7 +104,7 @@ done
 ```bash
 ./stop-glm53.sh --profile 384k-quality
 ./start-glm53.sh 512k-mtp-eager
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 for tokens in 300000 400000 480000; do
   ./bench-long-context.py --allow-unsafe-profile --target-tokens "$tokens" \
     --cold --label "512k-mtp-eager-${tokens}"
@@ -116,7 +116,7 @@ done
 ```bash
 ./stop-glm53.sh --profile 512k-mtp-eager
 ./start-glm53.sh 512k-mtp-cp
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 for tokens in 300000 400000 480000; do
   ./bench-long-context.py --allow-unsafe-profile --target-tokens "$tokens" \
     --cold --label "512k-mtp-cp-${tokens}"

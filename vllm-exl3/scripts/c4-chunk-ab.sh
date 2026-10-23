@@ -67,7 +67,7 @@ else
 fi
 
 log "C4 protocol: bench-glm53.py --runs $RUNS --concurrency $CONCURRENCY --thinking $THINKING --model $MODEL"
-python3 "$REPO_DIR/bench-glm53.py" \
+python3 "$REPO_DIR/tools/bench-glm53.py" \
     --model "$MODEL" \
     --runs "$RUNS" --concurrency "$CONCURRENCY" --thinking "$THINKING" \
     --output "$OUTPUT"

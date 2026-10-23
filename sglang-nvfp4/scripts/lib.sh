@@ -24,6 +24,13 @@ glm53_die() {
   exit 1
 }
 
+# Clones from before the sglang-nvfp4/ split keep .env.glm53 at the repo root.
+if [ "$GLM53_ENV_FILE" = "$GLM53_ROOT/.env.glm53" ] && [ ! -f "$GLM53_ENV_FILE" ] \
+  && [ -f "$GLM53_ROOT/../.env.glm53" ]; then
+  export GLM53_ENV_FILE="$(cd "$GLM53_ROOT/.." && pwd)/.env.glm53"
+  glm53_warn "Using legacy $GLM53_ENV_FILE; move it to $GLM53_ROOT/.env.glm53"
+fi
+
 glm53_require_command() {
   command -v "$1" >/dev/null 2>&1 || glm53_die "Required command not found: $1"
 }

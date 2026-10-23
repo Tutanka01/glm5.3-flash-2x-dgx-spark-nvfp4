@@ -1,5 +1,7 @@
 # Credits
 
+Pour le socle commun et la lane `sglang-nvfp4/` :
+
 - Z.ai / `zai-org` pour GLM-5.3-Flash et le checkpoint BF16 officiel.
 - LibertAIDAI pour la quantification ModelOpt NVFP4, la provenance détaillée et les validations GB10 publiées.
 - SGLang pour le serveur compatible OpenAI et le support `glm5_next`.
@@ -7,7 +9,7 @@
 - MiaAI-Lab pour le pattern de lancement worker-first, TP=2, multiprocessing, RoCE/NCCL/Gloo sur deux DGX Spark.
 - La recipe `LibertAIDAI/Hy3-NVFP4/deploy` pour les garde-fous de mémoire unifiée GB10.
 
-Pour la lane `vllm-exl3/` (branche `dev`) :
+Pour la lane `vllm-exl3/` :
 
 - MiaAI-Lab pour la recette vLLM/EXL3 vendorée (MIT) : overlay sparse-MLA NoPE, méthode EXL3 fused MoE, intégration DFlash2 k=7, patches prefix-cache et xgrammar, et ses contributeurs d'issues (PR #26 GID par rang, issue #22 robustesse de bring-up).
 - brandonmusic pour le checkpoint EXL3/TR3 4bpw (ShapleyMCG License 1.0) et Mia-AiLab pour son miroir public byte-identical.

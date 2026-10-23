@@ -780,7 +780,7 @@ def test_live_container_copy_if_enabled() -> None:
 def test_recipe_wiring_if_present() -> None:
     start = ROOT / "start.sh"
     dockerfile = ROOT / "Dockerfile"
-    readme = ROOT / "README.md"
+    readme = ROOT / "REFERENCE.md"
     if not start.is_file() or not dockerfile.is_file():
         return
     launcher = start.read_text()

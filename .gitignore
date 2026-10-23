@@ -8,9 +8,9 @@
 *.log
 __pycache__/
 .pytest_cache/
-results/*.json
-results/*.jsonl
-results/diagnostics/
+# Raw bench artifacts stay local, next to the lane that produced them;
+# figures worth keeping go to docs/img/.
+**/results/
 
 # Unrelated documents never belong in this public repo (a pentest report was
 # pushed by mistake on 2026-08-31).

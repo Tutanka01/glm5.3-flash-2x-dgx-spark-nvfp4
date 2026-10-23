@@ -2,8 +2,8 @@
 """GPU/system power and energy sampler for the glm53 benches (stdlib only).
 
 Two modes:
-  ./bench-power.py [options] -- COMMAND [args...]   sample around COMMAND
-  ./bench-power.py --watch [options]                sample until Ctrl+C
+  ../tools/bench-power.py [options] -- COMMAND [args...]   sample around COMMAND
+  ../tools/bench-power.py --watch [options]                sample until Ctrl+C
 
 Writes results/glm53-power-<label>-<stamp>.json (summary), .jsonl (raw
 samples/markers/events) and .svg (chart). GPU power comes from NVML
@@ -1568,12 +1568,12 @@ def build_parser() -> argparse.ArgumentParser:
         "or while watching. Run this on the GB10 nodes.",
         epilog=(
             "examples:\n"
-            "  ./bench-power.py --list-gpus\n"
-            "  ./bench-power.py --watch --label idle\n"
-            "  ./bench-power.py --label c6 -- python3 bench-glm53.py --runs 3 --concurrency 6\n"
-            "  ./bench-power.py --label long-200k --idle-window 15 -- python3 bench-long-context.py "
+            "  ../tools/bench-power.py --list-gpus\n"
+            "  ../tools/bench-power.py --watch --label idle\n"
+            "  ../tools/bench-power.py --label c6 -- python3 ../tools/bench-glm53.py --runs 3 --concurrency 6\n"
+            "  ../tools/bench-power.py --label long-200k --idle-window 15 -- python3 bench-long-context.py "
             "--target-tokens 200000 --cold\n"
-            "  ./bench-power.py --watch --markers /tmp/marks.txt   # echo 'prompt 1' >> /tmp/marks.txt\n"
+            "  ../tools/bench-power.py --watch --markers /tmp/marks.txt   # echo 'prompt 1' >> /tmp/marks.txt\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -13,7 +13,7 @@ l'upstream main** — ils restent documentés pour l'historique.
 **Licence amont** : l'upstream est passé de MIT à **AGPL-3.0** le 2026-09-07
 (`cf0f430`). Ce vendor reste au snapshot MIT `e25aa70` ; tout sync passe
 d'abord par `vllm-exl3/scripts/check-vendor-license.sh <ref>` (politique dans
-[CREDITS.md](../CREDITS.md#politique-de-licence-du-vendor-vllm-exl3)).
+[CREDITS.md](../../CREDITS.md#politique-de-licence-du-vendor-vllm-exl3)).
 
 ## Fixed in this vendor (vs upstream `main`)
 
@@ -67,7 +67,7 @@ wire mismatch that only adds log spam and a 2× TTFT penalty:
 The Triton draft-attention path is causal inside the draft block on this
 image; later-position acceptance collapses (0.918 → ~0.31 structured).
 SM121 picks `FLASH_ATTN` for the non-causal SWA drafter by default. See
-`EXL3-QUALITY.md`.
+`QUALITY.md`.
 
 ## Memory / sizing pitfalls (upstream README, condensed)
 

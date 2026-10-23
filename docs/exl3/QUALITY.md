@@ -53,13 +53,13 @@ Commands run from `vllm-exl3/` unless noted.
    python3 tests/bench_decode.py --phase prose --runs 5 --max-tokens 400 --skip-coherence --out /tmp/exl3-prose.json
    ```
    Record `tok_s_median`, `accept_ratio_median`, and the per-position `pos[]`
-   table into the root journal [BENCHMARKS.md](BENCHMARKS.md).
+   table into the root journal [BENCHMARKS.md](../BENCHMARKS.md).
 2. For the end-to-end quality A/B (promotion item — closer to real usage than
    KLD): identical coding tasks, temperature and token budgets on both sides,
    with raw completions captured and graded deterministically:
    ```
    export ZAI_API_KEY=...
-   python3 ../bench-glm53.py \
+   python3 ../tools/bench-glm53.py \
        --prompts tests/ab_quality_prompts.jsonl \
        --runs 1 --thinking off --save-content \
        --compare-base-url <official API> --compare-model glm-5.3-flash \

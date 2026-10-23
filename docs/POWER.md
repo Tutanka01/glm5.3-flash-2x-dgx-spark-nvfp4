@@ -12,21 +12,23 @@ driver NVML il refuse de démarrer avec un message explicite.
 
 ## Démarrage rapide
 
-Sur le head (ou le worker), depus la racine du dépôt :
+Sur le head (ou le worker), depuis le dossier de la lane servie
+(`sglang-nvfp4/` ou `vllm-exl3/`) ; l'exemple long contexte utilise le client
+de la lane SGLang :
 
 ```bash
 # Que détecte-t-on ?
-./bench-power.py --list-gpus
+../tools/bench-power.py --list-gpus
 
 # Relevé idle : combien consomment les GPU au repos (modèle chargé) ?
-./bench-power.py --watch --label idle --duration 60
+../tools/bench-power.py --watch --label idle --duration 60
 
 # Autour d'un bench : baseline idle 10 s → bench → idle 10 s
-./bench-power.py --label c6 \
-  -- python3 bench-glm53.py --runs 3 --concurrency 6
+../tools/bench-power.py --label c6 \
+  -- python3 ../tools/bench-glm53.py --runs 3 --concurrency 6
 
 # Long contexte froid avec baseline plus longue
-./bench-power.py --label long-200k --idle-window 15 \
+../tools/bench-power.py --label long-200k --idle-window 15 \
   -- python3 bench-long-context.py --target-tokens 200000 --cold --label 256k-safe
 ```
 
@@ -36,7 +38,7 @@ Chaque exécution écrit trois artefacts dans `results/` (ignoré par Git) :
 |---|---|
 | `glm53-power-<label>-<stamp>.json` | Résumé : stats par GPU (moyenne, pic, p95), énergie (J/Wh) et méthode, phases idle/charge, baseline idle, excès de charge |
 | `glm53-power-<label>-<stamp>.jsonl` | Flux brut ligne par ligne : `sample` (t, phase, watts, util, temp, horloges, compteur mJ), `marker`, `event` — `tail -f` + `jq` pour suivre en direct |
-| `glm53-power-<label>-<stamp>.svg` | Courbe de la puissance totale : axe Y auto-ajusté au pic réel, bandes grises = phases idle, ligne pointillée = moyenne de la phase de charge, pointillés verticaux = markers. Régénérable après coup sans GPU : `./bench-power.py --rechart results/glm53-power-<label>-<stamp>.jsonl` |
+| `glm53-power-<label>-<stamp>.svg` | Courbe de la puissance totale : axe Y auto-ajusté au pic réel, bandes grises = phases idle, ligne pointillée = moyenne de la phase de charge, pointillés verticaux = markers. Régénérable après coup sans GPU : `../tools/bench-power.py --rechart results/glm53-power-<label>-<stamp>.jsonl` |
 
 ## Séparer les choses
 
@@ -68,10 +70,10 @@ fichier devient un `marker` horodaté dans le flux, sans toucher au sampler.
 
 ```bash
 : > /tmp/power-marks.txt
-./bench-power.py --watch --label prompts --markers /tmp/power-marks.txt &
+../tools/bench-power.py --watch --label prompts --markers /tmp/power-marks.txt &
 # ... puis, à côté :
 echo "prompt 1 : coding C6" >> /tmp/power-marks.txt
-./bench-glm53.py --runs 1 --concurrency 6
+../tools/bench-glm53.py --runs 1 --concurrency 6
 echo "prompt 2 : long 200k" >> /tmp/power-marks.txt
 python3 bench-long-context.py --target-tokens 200000 --cold
 ```

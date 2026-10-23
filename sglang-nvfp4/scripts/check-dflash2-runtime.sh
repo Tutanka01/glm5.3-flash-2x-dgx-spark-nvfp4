@@ -151,4 +151,4 @@ else
 fi
 
 printf 'DFLASH2 runtime capability: PASS\n'
-printf 'Promotion still requires the cold/context/concurrency gates in docs/DFLASH2.md.\n'
+printf 'Promotion still requires the cold/context/concurrency gates in docs/sglang/DFLASH2.md.\n'

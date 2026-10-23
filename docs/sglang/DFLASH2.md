@@ -6,7 +6,7 @@ révision `9642d4f6628bb66e5fd03afe8e1c31bb2922c6c3`, du
 [drafter officiel Inco AI](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2)
 et du [support GLM DFlash dans SGLang #36708](https://github.com/sgl-project/sglang/pull/36708).
 Les pins structurés sont conservés dans
-[`metadata/dflash2-candidate.json`](../metadata/dflash2-candidate.json).
+[`metadata/dflash2-candidate.json`](../../sglang-nvfp4/metadata/dflash2-candidate.json).
 
 ## Verdict
 
@@ -41,8 +41,8 @@ cible, puis télécharge et contrôle le drafter 1B épinglé :
 ```bash
 ./prepare-dflash2.sh 128k-dflash2
 ./start-glm53.sh 128k-dflash2
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 4
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 4
 ```
 
 Pour chercher le sommet de débit agrégé observé autour de C5 dans le port
@@ -53,7 +53,7 @@ prompts :
 ./stop-glm53.sh --profile 128k-dflash2
 ./start-glm53.sh 128k-dflash2-c8
 for c in 1 2 4 5 6; do
-  ./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency "$c"
+  ../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency "$c"
 done
 ```
 
@@ -63,7 +63,7 @@ drafter déjà préparés et changez uniquement le backend draft :
 ```bash
 ./stop-glm53.sh --profile 128k-dflash2-c8
 ./start-glm53.sh 128k-dflash2-flashinfer
-./bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
+../tools/bench-glm53.py --warmup-runs 1 --runs 3 --concurrency 1
 ```
 
 Le profil de pression 240K est également prêt :

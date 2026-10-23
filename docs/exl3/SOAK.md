@@ -32,7 +32,7 @@ It exists so the eventual ✅ is an auditable claim, not a vibe.
 3. If the verdict is `UNHEALTHY`, stop and triage before continuing the soak:
    the journal row plus `logs/` decide whether the day restarts the counter.
 4. At the end of the window, re-run the two decode classes and one C4 bench
-   (from `vllm-exl3/`: `tests/bench_decode.py`, `../bench-glm53.py --concurrency 4`)
+   (from `vllm-exl3/`: `tests/bench_decode.py`, `../tools/bench-glm53.py --concurrency 4`)
    to confirm the perf rows in `BENCHMARKS.md` still reproduce after N days.
 
 ## What we are watching for

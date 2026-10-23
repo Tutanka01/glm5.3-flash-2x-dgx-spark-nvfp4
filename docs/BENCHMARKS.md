@@ -1,13 +1,13 @@
 # Historique des benchmarks — source unique des deux lanes
 
 Ce fichier est **la seule source de vérité** pour les mesures du cluster
-(2× GB10, TP=2, RoCE) : la lane SGLang/NVFP4 (défaut) et la lane EXL3/vLLM
-(branche `dev`). Aucun autre fichier du dépôt ne doit porter des chiffres de
+(2× GB10, TP=2, RoCE) : la lane SGLang/NVFP4 (`sglang-nvfp4/`) et la lane
+EXL3/vLLM (`vllm-exl3/`). Aucun autre fichier du dépôt ne doit porter des chiffres de
 bench : les docs de lane renvoient ici.
 
-Les artefacts JSON bruts restent dans `results/` (racine) ou `vllm-exl3/results/`
-(lane EXL3) — ignorés par Git ; ce journal en conserve l'essentiel avec le nom
-du fichier pour suivre régressions et gains.
+Les artefacts JSON bruts restent dans le `results/` de chaque lane
+(`sglang-nvfp4/results/`, `vllm-exl3/results/`) — ignorés par Git ; ce
+journal en conserve l'essentiel avec le nom du fichier pour suivre régressions et gains.
 
 Règles communes aux deux lanes (culture benchmark du repo + kit vendoré) :
 
@@ -18,9 +18,10 @@ Règles communes aux deux lanes (culture benchmark du repo + kit vendoré) :
 - une ligne pour un kit n'est valide qu'avec son artefact JSON (garder le nom
   du fichier dans la ligne) ;
 - ne jamais citer un tok/s structured sans le tok/s prose à côté (régimes
-  d'acceptation ~2,8×, voir [EXL3-QUALITY.md](EXL3-QUALITY.md)).
+  d'acceptation ~2,8×, voir [exl3/QUALITY.md](exl3/QUALITY.md)).
 
-Pour contribuer une ligne : `./bench-glm53.py --runs 3 --concurrency N`, puis
+Pour contribuer une ligne, depuis le dossier de la lane :
+`../tools/bench-glm53.py --runs 3 --concurrency N`, puis
 recopiez le résumé médian dans le tableau de la lane concernée en précisant le
 profil et la date.
 
@@ -56,7 +57,7 @@ profil et la date.
 - **DFlash2 mono-flux : meilleur décode mesuré sur ce cluster.** 37,2 tok/s à
   128K, soit ×2,6 contre le même bench sans spéculation (14,5) et +29 % contre
   MTP5 (29,0). Le seuil de promotion « gain C1 ≥ 25 % contre MTP » de
-  [DFLASH2.md](DFLASH2.md) est franchi dès le premier essai.
+  [sglang/DFLASH2.md](sglang/DFLASH2.md) est franchi dès le premier essai.
 - **TTFT intact** : 0,38 s médian, p99 0,42 s. Le draft 1B ne pénalise pas
   l'admission en mono-flux, au contraire de MTP5 qui coûtait déjà +0,1 s.
 - **Smoke chat + tools validé sur l'image dérivée** : parsing d'appel d'outil
@@ -110,7 +111,7 @@ profil et la date.
   sanity/reasoning (numérique inter-images vs défaut de vérification), marge
   mémoire ≥ 8 GiB (7,3 GiB mesurés à C6 sur le head), acceptation par classe
   stricte et stabilité longue. La promotion hors `experimental` attend ces
-  points (protocole dans [DFLASH2.md](DFLASH2.md)).
+  points (protocole dans [sglang/DFLASH2.md](sglang/DFLASH2.md)).
 - **Première tentative `128k-dflash2-c8` : arrêt au démarrage à 09:43, cause
   identifiée.** Ce n'est ni un bug DFlash2 ni un crash CUDA : le garde mémoire
   de démarrage du head a coupé le conteneur lui-même (`GUARD TRIP`,
@@ -191,6 +192,10 @@ retire la baseline idle (GPU chargé, à vide) mesurée avant/après chaque run.
 | 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 7 | 83,1 tok/s | 38,0 W | 41,4 W | 0,63 Wh | 0,42 Wh | 0,32 | `glm53-power-c7-20260831-085023.json` |
 | 2026-08-31 | `128k-dflash2-c8` | bench ×3 enveloppé (balayage) | 8 | 78,2 tok/s | 37,7 W | 41,5 W | 0,66 Wh | 0,43 Wh | 0,33 | `glm53-power-c8-20260831-085142.json` |
 
+![Puissance GPU du head pendant le bench C6 (balayage du 2026-08-31)](img/power/glm53-power-c6-20260831-084902.svg)
+
+Les courbes de tout le balayage sont dans [`img/power/`](img/power/).
+
 ### Lecture des mesures de puissance du 2026-08-31
 
 - **Le GB10 consomme très peu et surtout très constant.** Idle GPU chargé :
@@ -266,7 +271,7 @@ fonctionné avec SGLang à 240 008 tokens. Le segfault sous 2048 rapporté par l
 port DFlash2 concernait sa voie vLLM patchée ; ce n'est pas un plancher général
 du modèle et il ne doit pas remplacer la preuve obtenue sur le runtime présent.
 
-## Lane EXL3 / vLLM (branche `dev`) — 2× GB10, TP=2, RoCE, ThinkStation PGX, 2026-08-29
+## Lane EXL3 / vLLM — 2× GB10, TP=2, RoCE, ThinkStation PGX, 2026-08-29
 
 Chemin de service = celui d'amont, à l'octet près (image tirée, aucune
 modification de source) ; durcissement côté hôte uniquement. Données terrain
@@ -310,10 +315,10 @@ util 0.87 ; ~256k ×3 concurrents tenus en live (29,5 % de KV au pic).
 | 2026-08-29 | `bench_decode.py --phase structured --structured --runs 5 --max-tokens 400` | **66.7 tok/s** médian (63.3–68.6), TTFT 0.46 s, accept 0.959 / 6.71 par pas | **au-dessus de la baseline amont** (61.7 lab / 62.9 sparkDash, accept 0.918) ; par position 1.0/1.0/1.0/0.98/0.97/0.90/0.89 — pas d'effondrement tardif, chemin d'attention du drafter sain. Chemin de service identique : l'écart vient de la variance kit + de l'échantillonnage probabiliste du draft, pas de nos changements | `/tmp/exl3-structured.json` |
 | 2026-08-29 | `bench_decode.py --phase prose --runs 5 --max-tokens 400` | 25.2 tok/s médian (23.6–26.9), TTFT 0.46 s, accept 0.305 / 2.13 | dans la bande amont (26.9 lab / 27.1 second kit) ; la forme par position colle à la signature DFlash2 — l'asymétrie ~2.6× structured/prose est le caractère connu du drafter | `/tmp/exl3-prose.json` |
 | 2026-08-29 | `bench_prefix_cache.py` v2.1+ (`--prompt-tokens 8400`) | **hit 0.8541, eff 0.9999** — chaque page 3584 complète du prompt chaud réutilisée ; TTFT chaud 2.5 s vs 10.3 s vrai froid (**4.1×**) | modèle de pages confirmé : les hits sont alignés sur la **page hybride MLA de 3584 tokens** (`floor(tokens/3584)×3584`), et 7168 = 2×3584 exactement. Les bizarreries v1/v2.0 venaient de l'instrumentation du bench, pas de la stack : une fenêtre métriques couvrant froid+chaud divise le ratio par deux, et la réutilisation de contenu entre sessions fabrique de faux froids car l'image n'a **pas d'endpoint de reset du cache** (documenté en amont, issue #31 ; corrigé côté client par le sel de session) | `vllm-exl3/results/glm53-exl3-prefix-cache-*.json` |
-| 2026-08-29 | `./bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, agrégé **54.8 tok/s**, TTFT médian 1.61 s, **p99 16.7 s** | escalier de TTFT conforme à `GLM53_MIXED_PREFILL_CHUNK=skip` : les nouveaux prefills attendent qu'un décode se vide (coding r2 TTFT 9.54 s ≈ total coding r1 9.50 s). Tradeoff amont connu (schéma issue #19) ; adoucisseur candidat `GLM53_MIXED_PREFILL_CHUNK=256` | `vllm-exl3/results/glm53-benchmark-20260829-115750.json` |
+| 2026-08-29 | `../tools/bench-glm53.py --runs 3 --concurrency 4 --thinking off` | 9/9 ok, agrégé **54.8 tok/s**, TTFT médian 1.61 s, **p99 16.7 s** | escalier de TTFT conforme à `GLM53_MIXED_PREFILL_CHUNK=skip` : les nouveaux prefills attendent qu'un décode se vide (coding r2 TTFT 9.54 s ≈ total coding r1 9.50 s). Tradeoff amont connu (schéma issue #19) ; adoucisseur candidat `GLM53_MIXED_PREFILL_CHUNK=256` | `vllm-exl3/results/glm53-benchmark-20260829-115750.json` |
 | 2026-08-29 | `…` (skip, re-mesure après ajout de `wall_seconds` au bench) | 9/9 ok, agrégé **50.0 tok/s** (wall exact 37.1 s), TTFT médian 2.60 s, **p99 14.79 s** | escalier reproduit (TTFT 0.83 → 2.6 → 8.6 → 9.2 → 14.8 : prefills en file derrière les décodes) ; remplace la mesure de 11h57 dont le wall manquait — le fallback `max(total_seconds)` du comparateur surestimait l'agrégé (72.1 tok/s estimés) et avait faussé une première comparaison | `vllm-exl3/results/glm53-benchmark-c4-chunkskip-20260829-173451.json` |
 | 2026-08-29 | `c4-chunk-ab.sh --no-restart` sous `GLM53_MIXED_PREFILL_CHUNK=256` (même protocole C4) | 9/9 ok, agrégé **64.3 tok/s** (wall 30.7 s), TTFT médian 0.85 s, **p99 1.22 s** — verdict **PASS** : p99 ratio 0.083 (≤ 0.75), agrégé ratio 1.288 (≥ 0.95) | p99 TTFT **÷12** (14.8 → 1.2 s) et agrégé **+29 %** vs skip : le plafond mixte 256 élimine l'escalier sans rendre le goodput ; politique scheduler par défaut de la lane → **256** | `vllm-exl3/results/glm53-benchmark-c4-chunk256-20260829-173038.json` |
-| 2026-08-29 | A/B qualité : `bench-glm53.py --prompts tests/ab_quality_prompts.jsonl --runs 1 --thinking on --save-content` (budgets ×6 identiques, temp 0) vs OpenRouter `z-ai/glm-5.3-flash` | **PASS RATE 4/4 = 4/4** (grader exécutable : 2 tâches code contre tests unitaires, 2 tâches JSON structurelles) ; `release_config` **bit-identique** (sha256 égal des deux côtés) | confirmation bout en bout de l'argument KLD (0.0246, EXL3-QUALITY.md) : le 4bpw passe les mêmes tests que la référence. Caveats : le côté référence est OpenRouter **provider Modal** (pas z.ai direct) et son reasoning est obligatoire (400 « Reasoning is mandatory… ») → thinking forcé des deux côtés ; 1 run/tâche. Ne pas citer les tok/s decode de ce run : en thinking le TTFT inclut le raisonnement, métrique non comparable aux rows DFlash2 | `vllm-exl3/results/ab-quality-20260829-233715.json` |
+| 2026-08-29 | A/B qualité : `bench-glm53.py --prompts tests/ab_quality_prompts.jsonl --runs 1 --thinking on --save-content` (budgets ×6 identiques, temp 0) vs OpenRouter `z-ai/glm-5.3-flash` | **PASS RATE 4/4 = 4/4** (grader exécutable : 2 tâches code contre tests unitaires, 2 tâches JSON structurelles) ; `release_config` **bit-identique** (sha256 égal des deux côtés) | confirmation bout en bout de l'argument KLD (0.0246, exl3/QUALITY.md) : le 4bpw passe les mêmes tests que la référence. Caveats : le côté référence est OpenRouter **provider Modal** (pas z.ai direct) et son reasoning est obligatoire (400 « Reasoning is mandatory… ») → thinking forcé des deux côtés ; 1 run/tâche. Ne pas citer les tok/s decode de ce run : en thinking le TTFT inclut le raisonnement, métrique non comparable aux rows DFlash2 | `vllm-exl3/results/ab-quality-20260829-233715.json` |
 | 2026-08-29 | `bench_long_context.py --target-tokens 200000 --cold` | **ok, 3/3 aiguilles (sha256 exact), API saine** — 200 005 tokens, TTFT 229.5 s, prefill 871.3 tok/s e2e, décode 150.2 tok/s (réponse 40 tokens, petit échantillon) | pool 1.75M → 200k ≈ 11 %. Pas d'endpoint de reset sur ce build → le filler SESSION garantit le froid | `vllm-exl3/results/glm53-long-context-long-context-20260829-122213.json` |
 | 2026-08-29 | `… --target-tokens 500000 --cold --label 500k-cold` | **ok, 3/3 aiguilles, API saine** — 500 011 tokens, TTFT 598.0 s, prefill 836.1 tok/s | pages des runs précédents encore résidentes ; −4 % de prefill vs 200k | `vllm-exl3/results/glm53-long-context-500k-cold-20260829-123606.json` |
 | 2026-08-29 | `… --target-tokens 900000 --cold --label 900k-cold` | **ok, 3/3 aiguilles, API saine — 900 007 tokens froids** | TTFT 1138.4 s, prefill 790.6 tok/s ; 1.6M de pages cumulées résidentes dans le pool 1.75M | `vllm-exl3/results/glm53-long-context-900k-cold-20260829-125558.json` |
@@ -353,7 +358,7 @@ les agents en rafales.
   exit 0 avec uniquement des événements récupérés = pass, plus les comptes
   bruts d'événements.
 - soak OpenCode multi-jours sur trafic agent réel, redémarrage inclus ⬜
-  → protocole + journal dans [EXL3-SOAK.md](EXL3-SOAK.md) (sonde quotidienne
+  → protocole + journal dans [exl3/SOAK.md](exl3/SOAK.md) (sonde quotidienne
   `vllm-exl3/scripts/soak-day.sh`).
 - A/B qualité contre l'API officielle sur tâches de code/agent identiques
   (l'argument KLD mérite une confirmation bout en bout) ✅ 2026-08-29

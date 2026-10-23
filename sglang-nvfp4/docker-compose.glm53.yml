@@ -73,7 +73,7 @@ services:
       MAMBA_SSM_DTYPE: "${MAMBA_SSM_DTYPE:-}"
       MAX_MAMBA_CACHE_SIZE: "${MAX_MAMBA_CACHE_SIZE:-}"
 
-      # Optional optimization experiments (docs/OPTIMIZATION.md). The defaults
+      # Optional optimization experiments (../docs/sglang/OPTIMIZATION.md). The defaults
       # reproduce the validated recipe behavior exactly.
       EP_SIZE: "${EP_SIZE:-2}"
       ENABLE_TORCH_COMPILE: "${ENABLE_TORCH_COMPILE:-0}"

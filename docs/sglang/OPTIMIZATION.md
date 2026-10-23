@@ -2,7 +2,7 @@
 
 Ce document recense les leviers d'optimisation compatibles avec la recette
 (2× GB10, TP=2, image SGLang épinglée), du plus simple au plus invasif. Il
-complete [BENCHMARKS.md](BENCHMARKS.md) : chaque levier doit y gagner sa ligne
+complete [BENCHMARKS.md](../BENCHMARKS.md) : chaque levier doit y gagner sa ligne
 après mesure, et aucun ne modifie la distribution de sortie du modèle sauf
 mention explicite.
 
@@ -22,14 +22,14 @@ Chaque expérimentation suit le même cycle :
 ```bash
 ./stop-glm53.sh --profile <profil-actif>
 ./start-glm53.sh <profil-candidat>
-./bench-glm53.py --runs 3 --concurrency N
+../tools/bench-glm53.py --runs 3 --concurrency N
 ./smoke-glm53.sh --profile <profil-candidat> --tools
 ```
 
 1. comparez TTFT médian/p99, décode médian et goodput agrégé avec la ligne de
-   référence du profil d'origine dans [BENCHMARKS.md](BENCHMARKS.md) ;
+   référence du profil d'origine dans [BENCHMARKS.md](../BENCHMARKS.md) ;
 2. le smoke test vérifie la cohérence des réponses et du tool calling ;
-3. notez la mesure dans [BENCHMARKS.md](BENCHMARKS.md) avec l'artefact JSON de
+3. notez la mesure dans [BENCHMARKS.md](../BENCHMARKS.md) avec l'artefact JSON de
    `results/`, y compris les régressions ;
 4. en cas de comportement anormal, capturez les logs des deux rangs
    (`./logs-glm53.sh --profile <candidat> --node both --tail 500`) avant de

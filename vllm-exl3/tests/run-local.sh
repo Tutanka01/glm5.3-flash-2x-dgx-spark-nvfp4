@@ -4,7 +4,7 @@
 # Validates shell syntax, the fragile text contracts of start.sh, the overlay
 # patch unit tests, and the bench clients against a mock OpenAI server.
 # Nothing here downloads the checkpoint or requires docker/GPU — hardware
-# validation is the on-cluster protocol: see the root README and docs/BENCHMARKS.md.
+# validation is the on-cluster protocol: see README.md and ../docs/BENCHMARKS.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -68,7 +68,7 @@ fi
 
 # 6. bench clients against the mock OpenAI server
 MOCK_PORT_FILE="$(mktemp)"
-python3 ../tests/mock_openai_server.py --port 0 --port-file "$MOCK_PORT_FILE" &
+python3 ../tools/tests/mock_openai_server.py --port 0 --port-file "$MOCK_PORT_FILE" &
 MOCK_PID=$!
 trap '{ kill "$MOCK_PID" 2>/dev/null || true; wait "$MOCK_PID" 2>/dev/null || true; } 2>/dev/null; { kill "${BLANK_PID:-}" 2>/dev/null || true; wait "${BLANK_PID:-}" 2>/dev/null || true; } 2>/dev/null; rm -f "$MOCK_PORT_FILE" "$BLANK_PORT_FILE"' EXIT
 for _ in $(seq 1 20); do
@@ -111,7 +111,7 @@ PY
     # 6c. blank-args injection: client retry must recover every turn. One
     # agent keeps the counter parity deterministic under interleaving.
     BLANK_PORT_FILE="$(mktemp)"
-    python3 ../tests/mock_openai_server.py --port 0 --port-file "$BLANK_PORT_FILE" \
+    python3 ../tools/tests/mock_openai_server.py --port 0 --port-file "$BLANK_PORT_FILE" \
         --blank-tool-args-every 2 &
     BLANK_PID=$!
     for _ in $(seq 1 20); do [ -s "$BLANK_PORT_FILE" ] && break; sleep 0.2; done

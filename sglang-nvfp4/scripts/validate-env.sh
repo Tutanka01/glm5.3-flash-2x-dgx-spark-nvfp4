@@ -72,7 +72,7 @@ case "$API_PORT" in ''|*[!0-9]*) glm53_die "API_PORT must be an integer" ;; esac
 [ "$MASTER_PORT" -ge 1 ] && [ "$MASTER_PORT" -le 65535 ] || glm53_die "MASTER_PORT is out of range"
 [ "$API_PORT" -ge 1 ] && [ "$API_PORT" -le 65535 ] || glm53_die "API_PORT is out of range"
 
-# Optional optimization knobs (docs/OPTIMIZATION.md). Normalized here so the
+# Optional optimization knobs (docs/sglang/OPTIMIZATION.md). Normalized here so the
 # checks below also pass with pre-2026-08-27 .env.glm53 files that omit them.
 # The defaults reproduce the validated recipe behavior exactly.
 EP_SIZE="${EP_SIZE:-2}"

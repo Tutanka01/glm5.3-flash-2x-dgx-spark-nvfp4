@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TOOLS_DIR="$(cd "$ROOT_DIR/../tools" && pwd)"
 TEST_TMP="$(mktemp -d /tmp/glm53-api-test.XXXXXX)"
 SERVER_PID=""
 cleanup() {
@@ -16,7 +17,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 "$ROOT_DIR/tests/mock_openai_server.py" --port-file "$TEST_TMP/port" &
+python3 "$TOOLS_DIR/tests/mock_openai_server.py" --port-file "$TEST_TMP/port" &
 SERVER_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   [ -s "$TEST_TMP/port" ] && break
@@ -31,10 +32,10 @@ GLM53_ENV_FILE="$ROOT_DIR/tests/fixtures/valid.env" \
 
 (
   cd "$TEST_TMP"
-  "$ROOT_DIR/bench-glm53.py" \
+  "$TOOLS_DIR/bench-glm53.py" \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --model glm-5.3-flash-nvfp4 \
-    --prompts "$ROOT_DIR/examples/benchmark-prompts.jsonl" \
+    --prompts "$TOOLS_DIR/benchmark-prompts.jsonl" \
     --runs 1 \
     --output "$TEST_TMP/result.json" >/dev/null
 )

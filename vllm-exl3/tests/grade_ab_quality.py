@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Grade an A/B quality artifact from bench-glm53.py (EXL3 vs official API).
 
-The KLD panel in docs/EXL3-QUALITY.md scores the *weights*; this grader scores the
+The KLD panel in docs/exl3/QUALITY.md scores the *weights*; this grader scores the
 *end-to-end lane* on identical coding tasks, per the last open promotion item.
 Run the comparison with raw content capture, then grade:
 
     export ZAI_API_KEY=...
-    python3 bench-glm53.py \
+    python3 tools/bench-glm53.py \
         --prompts vllm-exl3/tests/ab_quality_prompts.jsonl \
         --runs 1 --thinking off --save-content \
         --compare-base-url 'https://<official API>/v1' \
