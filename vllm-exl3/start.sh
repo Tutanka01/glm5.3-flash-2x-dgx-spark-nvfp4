@@ -526,8 +526,20 @@ preflight() {
     [ -f "$SCRIPT_DIR/overlay/patch_ablit.py" ] || die "$SCRIPT_DIR/overlay/patch_ablit.py missing"
     [ -f "$SCRIPT_DIR/overlay/ablit_runtime.py" ] || die "$SCRIPT_DIR/overlay/ablit_runtime.py missing"
     [ -f "$SCRIPT_DIR/ablit/LAYER_MAP.json" ] || die "$SCRIPT_DIR/ablit/LAYER_MAP.json missing"
+    # GB10 is unified memory: whatever vLLM does not claim is all the OS, the
+    # API server and load-time transients get, and an overrun hard-resets the
+    # node instead of OOM-killing the container (2026-10-22: both nodes lost
+    # at 0.89 with NV_ERR_NO_MEMORY right after KV sizing).
+    if awk -v u="$GPU_MEM_UTIL" 'BEGIN { exit !(u > 0.87) }'; then
+        warn "GPU_MEM_UTIL=${GPU_MEM_UTIL} is above the validated 0.87 — on GB10 an overrun hard-resets the nodes; lower it unless this exact config already ran clean"
+    fi
     if [ "$ABLIT" = "1" ]; then
         log "ablit: ON (method=${ABLIT_METHOD} layers=${ABLIT_LAYERS} mtp=${ABLIT_INCLUDE_MTP} model=${SERVED_MODEL_NAME})"
+        if awk -v s="$ABLIT_LAYERS" 'BEGIN { n = split(s, a, ","); for (i = 1; i <= n; i++) {
+                m = split(a[i], b, "-"); lo = b[1] + 0; hi = (m > 1 ? b[2] : b[1]) + 0
+                if (lo <= 44 && 44 <= hi) exit 0 } exit 1 }'; then
+            warn "ABLIT_LAYERS=${ABLIT_LAYERS} edits L44 — the published recipe keeps it stock since 2026-09-27 (donor L44 rel_l2 0.74, garble risk); use 15-43,45 (or drop ABLIT_LAYERS from .env)"
+        fi
         [ "$ABLIT_METHOD" = "proj" ] || ensure_ablit_transplant
     fi
 

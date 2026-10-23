@@ -59,12 +59,14 @@ Env knobs (see .env.example):
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
 import os
 import re
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -288,10 +290,8 @@ def apply_ablit(
     return report
 
 
-def load_transplant_tensors(
-    ablit_dir: str, layers: list[int]
-) -> dict[int, torch.Tensor]:
-    """Load donor o_proj tensors (full, unsharded) from ablit/transplant/."""
+def _transplant_meta(ablit_dir: str, layers: list[int]) -> tuple[Path, dict[int, dict]]:
+    """Manifest entries of the wanted layers, size-checked before any edit."""
     tdir = Path(ablit_dir) / TRANSPLANT_SUBDIR
     manifest_path = tdir / "MANIFEST.json"
     if not manifest_path.is_file():
@@ -299,7 +299,7 @@ def load_transplant_tensors(
                          "— run ablit/fetch_transplant.py first")
     manifest = json.loads(manifest_path.read_text())
     meta = {int(k): v for k, v in (manifest.get("layers") or manifest.get("tensors") or {}).items()}
-    out: dict[int, torch.Tensor] = {}
+    out: dict[int, dict] = {}
     for L in layers:
         if L not in meta:
             continue
@@ -307,34 +307,103 @@ def load_transplant_tensors(
         path = tdir / f"L{L}.bin"
         if not path.is_file():
             raise AblitError(f"transplant manifest lists L{L} but {path} is missing")
-        raw = path.read_bytes()
-        if len(raw) != int(info["nbytes"]):
+        if path.stat().st_size != int(info["nbytes"]):
             raise AblitError(
-                f"transplant L{L}: expected {info['nbytes']} bytes, got {len(raw)} "
+                f"transplant L{L}: expected {info['nbytes']} bytes, got {path.stat().st_size} "
                 "— re-run ablit/fetch_transplant.py")
         if info["dtype"] != "BF16":
             raise AblitError(f"transplant L{L}: unsupported dtype {info['dtype']}")
-        want_sha = info.get("sha256")
-        if not want_sha:
+        if not info.get("sha256"):
             raise AblitError(f"transplant manifest has no sha256 for L{L} "
                              "— re-run ablit/fetch_transplant.py")
-        if hashlib.sha256(raw).hexdigest() != want_sha:
-            raise AblitError(
-                f"transplant L{L}: sha256 mismatch (corrupt or partial copy) "
-                "— re-run ablit/fetch_transplant.py")
-        t = torch.frombuffer(bytearray(raw), dtype=torch.bfloat16).reshape(
-            tuple(info["shape"]))
-        out[L] = t
+        out[L] = info
     if not out:
         raise AblitError(
             f"no transplant tensors under {tdir} cover ABLIT_LAYERS — "
             "run ablit/fetch_transplant.py first")
-    return out
+    return tdir, out
+
+
+def _read_donor(tdir: Path, L: int, info: dict) -> torch.Tensor:
+    """One donor tensor on CPU: a single buffer, read in place, sha256-checked."""
+    nbytes = int(info["nbytes"])
+    buf = bytearray(nbytes)
+    view = memoryview(buf)
+    with open(tdir / f"L{L}.bin", "rb", buffering=0) as f:
+        got = 0
+        while got < nbytes:
+            n = f.readinto(view[got:])
+            if not n:
+                break
+            got += n
+    if got != nbytes:
+        raise AblitError(f"transplant L{L}: short read {got}/{nbytes}")
+    if hashlib.sha256(buf).hexdigest() != info["sha256"]:
+        raise AblitError(
+            f"transplant L{L}: sha256 mismatch (corrupt or partial copy) "
+            "— re-run ablit/fetch_transplant.py")
+    return torch.frombuffer(buf, dtype=torch.bfloat16).reshape(tuple(info["shape"]))
+
+
+class _StreamedDonors(Mapping):
+    """Donor tensors read on access and never cached.
+
+    GB10 is unified memory: holding all ~2.6 GiB of donors next to the loaded
+    model (upstream issue #165) left ~1.6 GiB free on a node and is a hard-
+    reset risk. One tensor at a time keeps the host peak at ~128 MiB."""
+
+    def __init__(self, tdir: Path, meta: dict[int, dict]):
+        self._tdir, self._meta = tdir, meta
+
+    def __getitem__(self, L: int) -> torch.Tensor:
+        return _read_donor(self._tdir, L, self._meta[L])
+
+    def __iter__(self):
+        return iter(self._meta)
+
+    def __len__(self) -> int:
+        return len(self._meta)
+
+
+def load_transplant_tensors(
+    ablit_dir: str, layers: list[int]
+) -> dict[int, torch.Tensor]:
+    """Load donor o_proj tensors (full, unsharded) eagerly. Tests/tools only:
+    the serve path streams them through _StreamedDonors."""
+    tdir, meta = _transplant_meta(ablit_dir, layers)
+    return {L: _read_donor(tdir, L, info) for L, info in meta.items()}
+
+
+def _delta_stats(weight: torch.Tensor, shard: torch.Tensor, rows: int = 256) -> tuple[float, float]:
+    """rel_l2 and mean_rel of shard vs weight, in row blocks: no full-size
+    fp32 temporaries on the device (they stayed in the CUDA caching
+    allocator and starved the KV pool, upstream issue #165)."""
+    sq_d = sq_w = abs_d = abs_w = 0.0
+    for i in range(0, weight.shape[0], rows):
+        w = weight[i:i + rows].float()
+        d = shard[i:i + rows].to(device=weight.device, dtype=torch.float32) - w
+        sq_d += float(d.square().sum())
+        sq_w += float(w.square().sum())
+        abs_d += float(d.abs().sum())
+        abs_w += float(w.abs().sum())
+        del w, d
+    rel_l2 = math.sqrt(sq_d) / max(math.sqrt(sq_w), 1e-9)
+    mean_rel = abs_d / max(abs_w, 1e-9)
+    return rel_l2, mean_rel
+
+
+def _mem_line() -> str:
+    """Device-visible free memory (system-wide on GB10 unified memory)."""
+    if not torch.cuda.is_available():
+        return "cuda n/a"
+    free, total = torch.cuda.mem_get_info()
+    return (f"free={free / 2**30:.2f} GiB/{total / 2**30:.2f} GiB "
+            f"reserved={torch.cuda.memory_reserved() / 2**30:.2f} GiB")
 
 
 def apply_transplant(
     model: Any,
-    donors: dict[int, torch.Tensor],
+    donors: Mapping[int, torch.Tensor],
     layers: list[int],
     include_mtp: bool,
 ) -> dict[str, Any]:
@@ -370,17 +439,14 @@ def apply_transplant(
             raise AblitError(
                 f"ablit transplant: {name} shape {tuple(weight.shape)} does not "
                 f"match donor {tuple(donor.shape)} at TP={world}")
+        # Donors are CPU tensors (torch.frombuffer); o_proj already lives on
+        # the GPU. Stats run in row blocks on weight's device and copy_ goes
+        # host->device in place: no full-size device temporaries.
         shard = donor if world == 1 else donor[:, rank * local_in:(rank + 1) * local_in]
-        # Donors come from torch.frombuffer on CPU; o_proj is already on the
-        # worker GPU. Compare and copy on weight's device (proj path already
-        # does r.to(weight.device); transplant forgot).
-        shard = shard.to(device=weight.device, dtype=weight.dtype)
         with torch.no_grad():
-            w32 = weight.data.float()
-            d32 = shard.float()
-            rel_l2 = float((d32 - w32).norm() / w32.norm().clamp_min(1e-9))
-            mean_rel = float((d32 - w32).abs().mean() / w32.abs().mean().clamp_min(1e-9))
+            rel_l2, mean_rel = _delta_stats(weight.data, shard)
             weight.data.copy_(shard)
+        del donor, shard
         report["edited_layers"].append(idx)
         report["deltas"][idx] = {"rel_l2": rel_l2, "mean_rel": mean_rel}
         if is_mtp:
@@ -411,8 +477,15 @@ def maybe_apply(model: Any) -> dict[str, Any] | None:
                 logger.info("ablit: ABLIT_METHOD=auto -> transplant "
                             "(direction proj does not align with stock o_proj "
                             "on this model)")
-            donors = load_transplant_tensors(ablit_dir, layers)
-            report = apply_transplant(model, donors, layers, include_mtp)
+            tdir, meta = _transplant_meta(ablit_dir, layers)
+            logger.info("ablit: before transplant %s", _mem_line())
+            report = apply_transplant(model, _StreamedDonors(tdir, meta), layers, include_mtp)
+            # Hand every transient block back before vLLM sizes the KV pool:
+            # on GB10 the allocator cache is the same physical memory.
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info("ablit: after transplant %s", _mem_line())
             if not report["edited_layers"] and not report["mtp_edited"]:
                 raise AblitError(
                     "ABLIT=1 transplant matched no o_proj — ABLIT_LAYERS="

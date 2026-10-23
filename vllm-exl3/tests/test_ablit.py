@@ -387,6 +387,35 @@ def check_transplant(tmp_root: str) -> None:
     else:
         print("transplant CUDA device-mismatch skip (no GPU)")
 
+    # blocked stats == full-tensor formula (row count not a block multiple)
+    gw = torch.Generator().manual_seed(5)
+    w = torch.randn(1000, 96, generator=gw).to(torch.bfloat16)
+    d = torch.randn(1000, 96, generator=gw).to(torch.bfloat16)
+    rel, mrel = ablit._delta_stats(w, d, rows=256)
+    w32, d32 = w.float(), d.float()
+    ref_rel = float((d32 - w32).norm() / w32.norm())
+    ref_mrel = float((d32 - w32).abs().mean() / w32.abs().mean())
+    assert abs(rel - ref_rel) < 1e-4 and abs(mrel - ref_mrel) < 1e-4, (rel, ref_rel, mrel, ref_mrel)
+
+    # serve path streams donors: never more than one alive at a time (GB10
+    # unified memory, upstream #165 — all 30 held at once left ~1.6 GiB free)
+    import weakref
+    live, peak = [], [0]
+    real_read = ablit._read_donor
+
+    def tracked(*a, **kw):
+        t = real_read(*a, **kw)
+        live.append(weakref.ref(t))
+        peak[0] = max(peak[0], sum(r() is not None for r in live))
+        return t
+
+    ablit._read_donor = tracked
+    try:
+        ablit.maybe_apply(_fake_model(with_mtp=True))
+    finally:
+        ablit._read_donor = real_read
+    assert peak[0] <= 2, f"{peak[0]} donor tensors alive at once"
+
     # default layers under auto: L44 keeps its stock weight, 45 (MTP) edited
     os.environ["ABLIT_METHOD"] = "auto"
     os.environ.pop("ABLIT_LAYERS", None)
@@ -424,7 +453,8 @@ def check_transplant(tmp_root: str) -> None:
     for k in ("ABLIT", "ABLIT_DIR", "ABLIT_METHOD", "ABLIT_LAYERS", "ABLIT_INCLUDE_MTP",
               "ABLIT_DIRECTION"):
         os.environ.pop(k, None)
-    print("transplant OK (byte-copy, TP shard slice, deltas, L44 anchor, sha256, no proj fallback)")
+    print("transplant OK (byte-copy, TP shard slice, deltas, blocked stats, streamed donors, "
+          "L44 anchor, sha256, no proj fallback)")
 
 
 def main() -> None:
