@@ -55,12 +55,23 @@ def _run_preamble(env_file: str, caller: dict[str, str], probe: str) -> str:
         (tmp / ".env").write_text(env_file)
 
         env = {k: v for k, v in os.environ.items()
-               if k not in ("GLM53_INDEXER_WORKSPACE", "GLM53_SPINWAIT_MS")}
+               if k not in ("MAX_MODEL_LEN", "GLM53_INDEXER_WORKSPACE", "GLM53_SPINWAIT_MS")}
         env.update(caller)
         result = subprocess.run(
             ["bash", str(script)], check=True, capture_output=True, text=True, env=env
         )
     return result.stdout.strip()
+
+
+def test_max_model_len_inline_override_wins() -> None:
+    probe = '\nprintf "MAX_MODEL_LEN=%s\\n" "${MAX_MODEL_LEN-unset}"\n'
+    env_file = "MAX_MODEL_LEN=768000\n"
+
+    assert _run_preamble(env_file, {}, probe) == "MAX_MODEL_LEN=768000"
+    assert _run_preamble(
+        env_file, {"MAX_MODEL_LEN": "1000000"}, probe
+    ) == "MAX_MODEL_LEN=1000000"
+    assert _run_preamble("", {}, probe) == "MAX_MODEL_LEN=unset"
 
 
 def test_indexer_workspace_caller_capture_is_setness_aware() -> None:
@@ -106,6 +117,7 @@ def test_spinwait_caller_capture_is_setness_aware() -> None:
 
 if __name__ == "__main__":
     test_max_num_seqs_inline_override_wins()
+    test_max_model_len_inline_override_wins()
     test_indexer_workspace_caller_capture_is_setness_aware()
     test_spinwait_caller_capture_is_setness_aware()
     print("start.sh caller override regression OK")

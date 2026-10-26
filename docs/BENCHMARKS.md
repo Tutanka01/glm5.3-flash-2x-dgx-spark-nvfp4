@@ -371,3 +371,31 @@ les agents en rafales.
 Encore en attente sur ce kit : lecture `coldhit` sur un run prefix salé et les
 deux soaks (la comparaison C4 et l'A/B qualité sont passés le 29/08, voir rows
 et checklist ci-dessus).
+
+## Nouveaux leviers 2026-10 — protocole et portes
+
+Cette passe ajoute quatre leviers à la lane EXL3. Aucun n'entre dans les
+tableaux ci-dessus sans un artifact JSON et un boot de contrôle sur ce kit.
+
+| Levier | Défaut | Mesure | Porte d'adoption |
+|---|---|---|---|
+| `GLM53_APC_PER_GROUP_RETENTION=1` | on | `tests/bench_cache_sessions.py --sessions 4 --ctx-tokens 60000 --rounds 3` | round ≥2 hit ≥ 0,95 ; replay 110k inchangé ; décode ±bruit |
+| `GLM53_FINE_GRAINED_APC=1` | off | `tests/bench_cache_sessions.py --sub-page --rounds 2` | prompt 2,6k hit ≥ 2 500 ; 6,5k ≥ 6 000 ; structured ≥ 97 % du contrôle |
+| `GLM53_ADAPTIVE_K=ema` | off | A → B0 (`_CAPTURE=1`) → B, `tests/bench_decode.py` | B vs B0 prose/agentic ≥ +5 %, structured ≥ 97 % de B0, accept 7/7, MemFree ≥ 2,5 GiB |
+| `EXL3_FAT_PIPELINE=1` | off | `tests/bench_fat_gemm_pipe.py` puis ladder froid 8k/100k/300k | bit-exact 100 %, 300k ≥ +5 %, décode ±2 % |
+| `GLM53_WARMUP_PREFILL_TOKENS=8192` | 0 | premier prompt long après boot | TTFT du premier prompt dans la bande des suivants |
+
+Règles :
+
+- **un restart par bras** ; l'état de l'engine après une charge mixte peut
+  doubler le préfill sans erreur (rapport terrain 2026-09) ;
+- jeter le premier prompt après boot (souvent ~4× plus lent) ;
+- sel unique pour les froids, reset `/reset_prefix_cache` entre les runs ;
+- noter `vllm:prompt_tokens_total` et le boot id avec chaque ligne ;
+- ne jamais comparer B directement à A pour l'adaptive-K : le coût des graphes
+  est dans B0.
+
+Le harness `vllm-exl3/scripts/bench-ab.py` automatise le restart, le health
+gate, le warmup jeté, le reset et la comparaison médianes/p99. Le détecteur
+`vllm-exl3/scripts/prefill-watchdog.py` signale une dérive de préfill avant
+qu'elle ne contamine une campagne.

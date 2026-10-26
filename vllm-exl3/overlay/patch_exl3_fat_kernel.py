@@ -23,7 +23,12 @@ def main() -> int:
     if not quant.is_dir() or not bindings.is_file():
         raise RuntimeError(f"invalid extension root: {ext_root}")
 
-    for name in ("exl3_fat_gemm.cu", "exl3_fat_gemm.cuh"):
+    for name in (
+        "exl3_fat_gemm.cu",
+        "exl3_fat_gemm.cuh",
+        "exl3_fat_gemm_pipe.cu",
+        "exl3_fat_gemm_pipe.cuh",
+    ):
         source = source_dir / name
         if not source.is_file():
             raise RuntimeError(f"missing additive source: {source}")
@@ -33,14 +38,18 @@ def main() -> int:
     text = replace_once(
         text,
         '#include "quant/exl3_moe.cuh"',
-        '#include "quant/exl3_moe.cuh"\n#include "quant/exl3_fat_gemm.cuh"',
+        '#include "quant/exl3_moe.cuh"\n'
+        '#include "quant/exl3_fat_gemm.cuh"\n'
+        '#include "quant/exl3_fat_gemm_pipe.cuh"',
     )
     text = replace_once(
         text,
         '    m.def("exl3_moe", &exl3_moe, "exl3_moe");',
         '    m.def("exl3_moe", &exl3_moe, "exl3_moe");\n'
         '    m.def("exl3_fat_gemm", &exl3_fat_gemm, "exl3_fat_gemm");\n'
-        '    m.def("exl3_fat_gemm_scatter", &exl3_fat_gemm_scatter, "exl3_fat_gemm_scatter");',
+        '    m.def("exl3_fat_gemm_scatter", &exl3_fat_gemm_scatter, "exl3_fat_gemm_scatter");\n'
+        '    m.def("exl3_fat_gemm_pipe", &exl3_fat_gemm_pipe, "exl3_fat_gemm_pipe");\n'
+        '    m.def("exl3_fat_gemm_pipe_scatter", &exl3_fat_gemm_pipe_scatter, "exl3_fat_gemm_pipe_scatter");',
     )
     bindings.write_text(text)
     return 0

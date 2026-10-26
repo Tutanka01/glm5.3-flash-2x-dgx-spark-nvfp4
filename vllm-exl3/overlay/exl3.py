@@ -168,6 +168,30 @@ def fat_kernel_enabled() -> bool:
     return os.environ.get("EXL3_FAT_KERNEL", "0") != "0"
 
 
+def fat_pipeline_enabled() -> bool:
+    """Use the 3-stage cp.async fat-GEMM variant when the image exposes it.
+
+    Default OFF: the stock per-expert kernel stays the fallback. Enable with
+    EXL3_FAT_PIPELINE=1 after the same-kit bit-exact + cold-prefill A/B.
+    """
+    return os.environ.get("EXL3_FAT_PIPELINE", "0") != "0"
+
+
+_fat_pipeline_logged = False
+
+
+def _log_fat_pipeline_once(use_pipe: bool) -> None:
+    global _fat_pipeline_logged
+    if _fat_pipeline_logged:
+        return
+    _fat_pipeline_logged = True
+    logger.info(
+        "exl3 fat-gemm path: %s (EXL3_FAT_PIPELINE=%s)",
+        "cp.async-pipeline" if use_pipe else "stock-sync",
+        os.environ.get("EXL3_FAT_PIPELINE", "0"),
+    )
+
+
 def fat_expert_log_enabled() -> bool:
     return os.environ.get("EXL3_FAT_EXPERT_LOG", "1") != "0"
 
@@ -826,6 +850,23 @@ def apply_exl3_batched_fat(
 ) -> torch.Tensor:
     """Run fat experts with persistent buffers and optional direct trellis GEMM."""
     ext = load_exllamav3_ext()
+    use_pipe = bool(use_kernel) and fat_pipeline_enabled()
+    if use_pipe:
+        if not hasattr(ext, "exl3_fat_gemm_pipe") or not hasattr(
+            ext, "exl3_fat_gemm_pipe_scatter"
+        ):
+            raise RuntimeError(
+                "EXL3_FAT_PIPELINE=1 requires exllamav3_ext."
+                "exl3_fat_gemm_pipe/_scatter; rebuild the image with the "
+                "pipe sources or unset EXL3_FAT_PIPELINE"
+            )
+    _log_fat_pipeline_once(use_pipe)
+    if use_pipe:
+        gemm = ext.exl3_fat_gemm_pipe
+        gemm_scatter = ext.exl3_fat_gemm_pipe_scatter
+    else:
+        gemm = getattr(ext, "exl3_fat_gemm", None)
+        gemm_scatter = getattr(ext, "exl3_fat_gemm_scatter", None)
     offset = 0
     for e, n_rows in enumerate(counts_host):
         start = offset
@@ -855,11 +896,11 @@ def apply_exl3_batched_fat(
         svh13[:intermediate].copy_(gate.svh)
         svh13[intermediate:].copy_(up.svh)
         if use_kernel:
-            if not hasattr(ext, "exl3_fat_gemm"):
+            if gemm is None:
                 raise RuntimeError(
                     "EXL3_FAT_KERNEL=1 requires exllamav3_ext.exl3_fat_gemm"
                 )
-            ext.exl3_fat_gemm(
+            gemm(
                 h13, packed13, gate_up, svh13, gate.K, gate.mcg, gate.mul1
             )
             _EXL3_FAT_DIAG["direct_calls"] += 1
@@ -882,12 +923,12 @@ def apply_exl3_batched_fat(
         h2 = scratch["h2"][:n_rows]
         ext.had_r_128(act_h, h2, down.suh, None, 1.0)
         if use_kernel:
-            if not hasattr(ext, "exl3_fat_gemm_scatter"):
+            if gemm_scatter is None:
                 raise RuntimeError(
                     "EXL3_FAT_KERNEL=1 requires "
                     "exllamav3_ext.exl3_fat_gemm_scatter"
                 )
-            ext.exl3_fat_gemm_scatter(
+            gemm_scatter(
                 h2,
                 down.trellis,
                 out,

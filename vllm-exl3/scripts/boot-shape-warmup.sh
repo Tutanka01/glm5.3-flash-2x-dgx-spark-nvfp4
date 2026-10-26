@@ -35,6 +35,10 @@ esac
 case "$DFLASH_K" in
   ''|*[!0-9]*) DFLASH_K=7 ;;
 esac
+PREFILL_TOKENS="${GLM53_WARMUP_PREFILL_TOKENS:-0}"
+case "$PREFILL_TOKENS" in
+  ''|*[!0-9]*) PREFILL_TOKENS=0 ;;
+esac
 NONCE="$$-$(date +%s)"
 
 AUTH_ARGS=()
@@ -192,6 +196,26 @@ ladder() {
   done
 }
 
+prefill_warmup() {
+  local n=$1 prompt payload
+  [ "$n" -gt 0 ] || return 0
+  echo "boot-shape-warmup: prefill warmup ~${n} words (MoE/KDA/MLA shapes)"
+  prompt=$(printf 'warmup %.0s' $(seq 1 "$n"))
+  payload='{"model":"'"$MODEL"'","prompt":"'"$prompt"'","max_tokens":1,"temperature":0}'
+  if "$CURL_BIN" -fsS --max-time "$REQ_TIMEOUT" "${AUTH_ARGS[@]}" \
+      "$BASE/v1/completions" -H "Content-Type: application/json" \
+      -d "$payload" >/dev/null 2>>"$tmpdir/errors"; then
+    echo ok > "$tmpdir/prefill-1"
+    echo "  prefill warmup: ok"
+  else
+    echo fail > "$tmpdir/prefill-1"
+    echo "  prefill warmup: FAILED"
+  fi
+  # The warmup prompt must not be a free prefix-cache hit for the first client.
+  "$CURL_BIN" -fsS --max-time 30 -X POST "${AUTH_ARGS[@]}" \
+      "$BASE/reset_prefix_cache" >/dev/null 2>&1 || true
+}
+
 if ! "$CURL_BIN" -fsS --max-time 10 "${AUTH_ARGS[@]}" "$BASE/v1/models" >/dev/null 2>&1; then
   echo "boot-shape-warmup: API not reachable at $BASE — skipping sweep" >&2
   exit 1
@@ -201,6 +225,7 @@ echo "boot-shape-warmup: sweeping DFlash2 k=${DFLASH_K} / sampler / kpool shapes
 total_t0=$(date +%s)
 
 ladder
+prefill_warmup "$PREFILL_TOKENS"
 
 EXPECTED_CHAT_REQUESTS=6
 burst c1        1 32 bounded false
@@ -223,6 +248,9 @@ if [ "$MAX_CONCURRENCY" -ge 4 ]; then
 fi
 if [ "$MAX_CONCURRENCY" -gt 4 ]; then
   echo "boot-shape-warmup: WARN: MAX_NUM_SEQS=${MAX_CONCURRENCY}; batch shapes above C=4 are not pre-warmed" >&2
+fi
+if [ "$PREFILL_TOKENS" -gt 0 ]; then
+  EXPECTED_CHAT_REQUESTS=$((EXPECTED_CHAT_REQUESTS + 1))
 fi
 
 SAMPLER_POSTCOND=ok

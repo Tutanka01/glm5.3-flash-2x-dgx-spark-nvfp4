@@ -19,8 +19,10 @@ if bash -n start.sh && bash -n stop.sh && bash -n download.sh \
 
 # 2. python compile of everything importable
 if python3 -m py_compile tests/bench_decode.py tests/bench_prefix_cache.py \
-    tests/bench_long_context.py tests/soak_tool_calls.py tests/compare_c4.py \
-    tests/grade_ab_quality.py tests/test_*.py overlay/patch_*.py 2>/dev/null; then
+    tests/bench_long_context.py tests/bench_cache_sessions.py \
+    tests/bench_fat_gemm_pipe.py tests/soak_tool_calls.py tests/compare_c4.py \
+    tests/grade_ab_quality.py tests/test_*.py \
+    scripts/bench-ab.py scripts/prefill-watchdog.py overlay/patch_*.py 2>/dev/null; then
     ok "py_compile (benches, soak, comparators, tests, overlay patches)"
 else
     bad "py_compile"
@@ -56,6 +58,36 @@ for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination
     if python3 "tests/${t}.py" >/dev/null 2>&1; then ok "$t"; else bad "$t"; fi
 done
 
+# 5b. host-only patch/wiring tests (pytest available in CI images; skipped otherwise)
+if python3 -c 'import pytest' >/dev/null 2>&1; then
+    if python3 -m pytest -q \
+        tests/test_prefix_cache_v2_wiring.py \
+        tests/test_exl3_fat_pipeline.py \
+        tests/test_adaptive_k_wiring_local.py \
+        tests/test_warmup_prefill.py \
+        tests/test_fine_grained_apc_overlay.py \
+        tests/test_apc_per_group_retention.py \
+        tests/test_apc_no_store.py \
+        tests/test_prefix_cache_sparse_miss_metric.py \
+        tests/test_adaptive_k_patch.py \
+        tests/test_align_floor.py \
+        tests/test_bench_ab.py >/dev/null 2>&1; then
+        ok "pytest host wiring/patch suite"
+    else
+        bad "pytest host wiring/patch suite"
+    fi
+else
+    step "pytest host wiring/patch suite skipped (pytest not installed)"
+fi
+
+# 5c. A/B harness dry-run (no network, no restart, no artifact)
+if python3 scripts/bench-ab.py --dry-run --no-restart --bench short_chat \
+    --arm baseline --workdir . >/dev/null 2>&1; then
+    ok "bench-ab dry-run"
+else
+    bad "bench-ab dry-run"
+fi
+
 # 4b. comparator/grader self-tests (math + deterministic graders, no server)
 if python3 tests/compare_c4.py --self-test >/dev/null 2>&1; then ok "compare_c4 self-test"; else bad "compare_c4 self-test"; fi
 if python3 tests/grade_ab_quality.py --self-test >/dev/null 2>&1; then ok "grade_ab_quality self-test"; else bad "grade_ab_quality self-test"; fi
@@ -84,6 +116,13 @@ if [ -s "$MOCK_PORT_FILE" ]; then
         ok "bench_prefix_cache against mock"
     else
         bad "bench_prefix_cache against mock"
+    fi
+    if python3 tests/bench_cache_sessions.py --base-url "http://127.0.0.1:${MOCK_PORT}/v1" \
+        --model glm-5.3-flash-nvfp4 --sessions 2 --ctx-tokens 256 --rounds 2 \
+        --max-tokens 8 --no-salt --out "$TMP_OUT/cache-sessions.json" >/dev/null 2>&1; then
+        ok "bench_cache_sessions against mock"
+    else
+        bad "bench_cache_sessions against mock"
     fi
     # clean failure when nothing listens (no traceback)
     if python3 tests/bench_prefix_cache.py --base-url http://127.0.0.1:1/v1 \

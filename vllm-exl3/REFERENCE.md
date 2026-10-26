@@ -318,6 +318,11 @@ Default is **1M**. Do **not** drop `MAX_MODEL_LEN` to 256k to “free” slots �
 logged tokens ≈ concurrency × that cap, and the hybrid floor then shrinks the
 pool.
 
+If startup fails because the KV cache cannot hold one request at the configured
+length, inspect the indexer workspace and other memory reservations first.
+To retain the 1M context, opt into `GLM53_INDEXER_WORKSPACE=rightsize`; caller
+exports override `.env` on both ranks. See the [startup diagnosis](README.md#contexte-maximal--cache-kv-insuffisant-au-démarrage).
+
 Keep **`SKIP_MM_PROFILING=1`** — a max-size image+video dummy profile OOMs this UMA.
 `LIMIT_MM={"image":4,"video":1}`.
 
@@ -541,6 +546,7 @@ that are now documented/enforced:
 | `ENFORCE_EAGER` | `0` | CUDA graphs; MTP capture `1 2 3 4 6 8 12`, DFlash2 `1 2 4 8 16 24 32` |
 | `EXL3_FUSED_MOE` | `1` | `exl3_moe` per layer; `0` = LinearEXL3 loop |
 | `EXL3_FAT_KERNEL` | `1` | [PR77 E2 fat-expert prefill kernel](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks/pull/77) (implies batched+sorted). `0` = legacy fat path |
+| `EXL3_FAT_PIPELINE` | `0` | 3-stage `cp.async` fat-GEMM variant (Reederey87 S2b, Apache-2.0). Same ABI/semantics; reference +38–41% kernel at M=3584, bit-exact. Opt-in until the cold-ladder A/B |
 | `KV_CACHE_DTYPE` | `fp8` | packed `fp8_ds_mla`; not `nvfp4`, not bf16 |
 | `GPU_MEM_UTIL` | `0.87` | GB10 UMA budget. Latest validated 7168/rightsize pool: **1,243,902 tokens / 1.24×** at 1M |
 | `MAX_MODEL_LEN` | `1000000` | default context. Pool size varies with MNBT, activation/graph reservations and hybrid block geometry |
@@ -550,6 +556,18 @@ that are now documented/enforced:
 | `GLM53_SUPPRESS_STOPS_IN_REASONING` | `1` | ignore client `stop` strings until `</think>` (thinking-on default) |
 | `GLM53_INDEXER_WORKSPACE` | `stock` | sparse-indexer prefill gather workspace. `stock` = `max_model_len * 40` entries (**5036.40 MB** locked at 1M — measured, `VLLM_DEBUG_WORKSPACE=1`). `rightsize` = the legal per-step maximum `min(MAX_NUM_SEQS, MNBT) * cdiv(MAX_MODEL_LEN + k, index_kpool)` = 126 MB at `MAX_NUM_SEQS=4` / 504 MB at 16, so **~+26–28% KV**. Opt-in; see [docs/DESIGN-indexer-workspace.md](docs/DESIGN-indexer-workspace.md) |
 | `GLM53_SPINWAIT_MS` | `stock` | SpinCondition reader busy-loop window. `stock` preserves vLLM's 1 s default; `1..1000` selects milliseconds. A frozen TP=2 sweep selected `16` (+0.95% median decode vs stock, 85.3% less active EngineCore CPU) |
+| `GLM53_APC_PER_GROUP_RETENTION` | `1` | Per-KV-group prefix retention: MLA/mamba dense, DFlash2 drafter at reachable boundaries. `0` restores one global interval |
+| `GLM53_FINE_GRAINED_APC` | `0` | Exempt non-participating managers (`KpoolTailManager`) from the fine-grained-hash veto → 64-token hits. Big sub-page win; reference cost −2,7% structured. Opt-in |
+| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA` | `0` | Retention interval for the EAGLE-exempt drafter group. Empty = automatic; `0` = reachable boundaries only; N = multiple of the scheduler block |
+| `GLM53_APC_NO_STORE` | `1` | Honour `SamplingParams.skip_writing_prefix_cache` / `vllm_xargs` per request. A batch/eval request no longer evicts live conversations. `0` ignores the flag |
+| `GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC` | `1` | Export `vllm:prefix_cache_sparse_retention_misses` (observability only) |
+| `GLM53_WARMUP_PREFILL_TOKENS` | `0` | Optional post-`/health` prefill warmup: N words (~N tokens), then reset the prefix cache. 8192 removes the first-long-prompt JIT |
+| `GLM53_ADAPTIVE_K` | `off` | Verification-only adaptive K for DFlash2: `off` / `ema` / `on` / `1`. Trims `request.spec_token_ids`, never the drafter. See [docs/DESIGN-adaptive-k.md](docs/DESIGN-adaptive-k.md) |
+| `GLM53_ADAPTIVE_K_CAPTURE` | `0` | Extra target FULL graphs for verify lens 3/5 without enabling the policy (B0 control) |
+| `GLM53_ADAPTIVE_K_SET` | `2,4,7` | Candidate verify lengths; `3`/`5` extra graphs are `k+1` |
+| `GLM53_ADAPTIVE_K_BATCH_MARGIN` | `0` | Trim the uniform batch row to the min known choice on mixed batches (policy on only) |
+| `GLM53_ADAPTIVE_K_POS_TRIM` | `0` | Concurrency-gated pos trim to `min(SET)`; C1 no-op; requires BATCH_MARGIN |
+| `GLM53_ALIGN_FLOOR` | `1` | Align-floor prerequisite: truncate to a mamba block boundary only when it leaves forward progress. Dormant at LPTT < 3584 |
 | `GLM53_BOOT_SHAPE_WARMUP` | `1` | after `/health`, burn DFlash2 BLOCK / sampler / kpool shapes (nonfatal) |
 | `TRITON_HOST_CACHE` / `TILELANG_HOST_CACHE` | `$CACHE_ROOT/triton` / `tilelang` | persist JIT caches across container recreate |
 | `LANGUAGE_MODEL_ONLY` | `0` | load vision tower (image + video) |
@@ -575,6 +593,14 @@ After CUDA compile, Python overlay edits (`overlay/exl3.py`, tests) are a cheap 
 | `Dockerfile` | NoPE sparse-MLA patches + EXL3 install (`sm_121a`) + self-check |
 | `overlay/exl3.py` | `Exl3Config` / packed load / TP shard / fused `exl3_moe` apply / E2 fat kernel |
 | `overlay/exl3_fat_gemm.cu` | additive `exl3_fat_gemm` / `_scatter` compiled into `exllamav3_ext` |
+| `overlay/exl3_fat_gemm_pipe.cu` | opt-in 3-stage `cp.async` variant (`EXL3_FAT_PIPELINE=1`), same ABI; ported from Apache-2.0 Reederey87 |
+| `tests/test_exl3_fat_pipeline.py` | static source/build/selector checks for the pipe variant |
+| `overlay/patch_fine_grained_apc.py` | 64-token APC: exempt non-participating managers from the fine-hash veto; `GLM53_FINE_GRAINED_APC=1` |
+| `overlay/patch_apc_per_group_retention.py` | per-group retention: MLA/mamba dense, DFlash2 drafter at reachable boundaries |
+| `overlay/patch_apc_no_store.py` | per-request `skip_writing_prefix_cache` write-side opt-out |
+| `overlay/patch_prefix_cache_sparse_miss_metric.py` | export `vllm:prefix_cache_sparse_retention_misses` |
+| `tests/test_prefix_cache_v2_wiring.py` | local launcher/flags/order checks for the prefix bundle |
+| `docs/exl3/PREFIX-CACHE.md` | multi-session cache protocol, knobs and adoption gates |
 | `overlay/patch_exl3_ext_aarch64.py` | stub AVX CPU allreduce so the ext builds on GB10 |
 | `overlay/patch_model_overrides.py` | `"exl3"` in ModelConfig overrides |
 | `tests/test_exl3_overlay.py` | registry, TP shard, `sm_121a` cubin, fused vs loop GEMM, `EXL3_FUSED_MOE=0` |
@@ -603,7 +629,7 @@ After CUDA compile, Python overlay edits (`overlay/exl3.py`, tests) are a cheap 
 | `ablit/` | direction vectors + `LAYER_MAP.json` from drowzeys' published recipe; `fetch_transplant.py` (pinned donor, `--check`) + `transplant/` for the donor o_proj byte-copy |
 | `tests/test_ablit.py` | recipe integrity, orthogonalization math, TP-shard equivalence, transplant byte-copy + TP slice, L44 anchor, sha256 refusal, no proj fallback, hook gating (needs torch) |
 | `tests/test_ablit_fetch.py` | fetch contracts: default layers, pinned revision, `--check`, stale manifest (no torch) |
-| `scripts/boot-shape-warmup.sh` | post-`/health` DFlash2 k=7 BLOCK ladder + sampler/kpool arms |
+| `scripts/boot-shape-warmup.sh` | post-`/health` DFlash2 k=7 BLOCK ladder + sampler/kpool arms; optional `GLM53_WARMUP_PREFILL_TOKENS` prefill burn + cache reset |
 
 Image-build runs `EXL3_SELFCHECK_GPU=0`. `./start.sh` runs the GPU self-check
 (`docker run --gpus all`) before shipping unless `SKIP_OVERLAY_VERIFY=1`.

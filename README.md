@@ -73,7 +73,7 @@ Pour passer d'une lane à l'autre, arrêtez d'abord celle qui tourne
 │   ├── BENCHMARKS.md   journal unique des mesures des deux lanes
 │   ├── POWER.md        mesure de la consommation électrique
 │   ├── sglang/         audit, réseau, DFlash2, optimisation, dépannage
-│   ├── exl3/           qualité, issues connues, soak
+│   ├── exl3/           qualité, cache agentique, issues connues, soak
 │   └── img/            figures (courbes de puissance)
 ├── run-tests.sh    tous les tests sans GPU
 └── CREDITS.md

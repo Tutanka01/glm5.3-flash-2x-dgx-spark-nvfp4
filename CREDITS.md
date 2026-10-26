@@ -40,3 +40,25 @@ Conséquences pour ce dépôt, distribué sous MIT :
   avis de licence et ses notices.
 
 Avant tout sync, `vllm-exl3/scripts/check-vendor-license.sh <ref>` refuse (code 1) une ref dont la licence n'est pas MIT.
+
+## Ajouts 2026-10 — durcissement agentique et noyaux
+
+Cette passe ajoute du code et des idées provenant de kits communautaires
+Apache-2.0, avec attribution explicite :
+
+- **[Reederey87/glm53-flash-exl3-2x-dgx-spark](https://github.com/Reederey87/glm53-flash-exl3-2x-dgx-spark)**
+  (Apache-2.0) : overlays de prefix-cache agentique (`patch_fine_grained_apc.py`,
+  `patch_apc_per_group_retention.py`, `patch_apc_no_store.py`,
+  `patch_prefix_cache_sparse_miss_metric.py`), variante 3-stage `cp.async` du
+  fat-GEMM (`exl3_fat_gemm.cu`), et les tests hôtes correspondants. Les fichiers
+  portés gardent leur en-tête SPDX Apache-2.0 et sont listés dans
+  [`vllm-exl3/NOTICE`](vllm-exl3/NOTICE).
+- **[MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold)**
+  (Apache-2.0) : idées et mesures servant de référence pour les prochains
+  chantiers (4-bit dense, KV compact, spill tiers, graphes drafter). Aucun code
+  TensorFold n'est vendoré dans cette passe ; les fichiers qui en seraient
+  dérivés devront conserver l'avis Apache-2.0 et être ajoutés à `NOTICE`.
+- **MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks** : le vendor reste au snapshot
+  MIT `e25aa70`. Les mesures et rapports publiés après le passage AGPL
+  (`cf0f430`, 2026-09-07) restent utilisables comme faits ; le code post-AGPL
+  n'entre pas dans ce dépôt sans décision de licence explicite.
