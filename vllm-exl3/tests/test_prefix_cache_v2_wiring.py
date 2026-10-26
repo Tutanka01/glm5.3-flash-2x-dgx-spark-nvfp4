@@ -73,7 +73,7 @@ def test_env_defaults_and_forwarding() -> None:
         in text
     )
     assert (
-        'VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-0}"'
+        'VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-}"'
         in text
     )
     assert 'GLM53_APC_NO_STORE="${GLM53_APC_NO_STORE:-1}"' in text
@@ -94,7 +94,7 @@ def test_env_defaults_and_forwarding() -> None:
 def test_dotenv_documents_the_bundle() -> None:
     text = ENV.read_text()
     assert "GLM53_FINE_GRAINED_APC=0" in text
-    assert "VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA=0" in text
+    assert "VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA=" in text
     assert "GLM53_APC_NO_STORE=1" in text
     assert "GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC=1" in text
 

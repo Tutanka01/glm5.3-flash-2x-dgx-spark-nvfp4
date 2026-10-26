@@ -77,6 +77,9 @@ at C4; do not enable C6/C8 capture without a MemFree measurement.
 - `start.sh`: host vars, preflight, worker scp, both mounts, both rank
   scripts, env forwarding, capture-list generator;
 - ordering: decode-floor → align-floor → adaptive-k;
+- default-off gate: with `GLM53_ADAPTIVE_K=off` and `_CAPTURE=0`, the overlay
+  is a byte-no-op (it does not even touch scheduler.py); MTP rollback is safe
+  because the patch is skipped, and the capture list stays the MTP one.
 - env: `GLM53_ADAPTIVE_K=off|ema|on|1`, `_CAPTURE=0|1`,
   `_SET=2,4,7`, `_ALPHA`, `_MARGIN`, `_MIN_STEPS`, `_SATURATE`,
   `_BATCH_MARGIN`, `_POS_TRIM`, `_CAPTURE_MAX_BATCH`;

@@ -558,7 +558,7 @@ that are now documented/enforced:
 | `GLM53_SPINWAIT_MS` | `stock` | SpinCondition reader busy-loop window. `stock` preserves vLLM's 1 s default; `1..1000` selects milliseconds. A frozen TP=2 sweep selected `16` (+0.95% median decode vs stock, 85.3% less active EngineCore CPU) |
 | `GLM53_APC_PER_GROUP_RETENTION` | `1` | Per-KV-group prefix retention: MLA/mamba dense, DFlash2 drafter at reachable boundaries. `0` restores one global interval |
 | `GLM53_FINE_GRAINED_APC` | `0` | Exempt non-participating managers (`KpoolTailManager`) from the fine-grained-hash veto → 64-token hits. Big sub-page win; reference cost −2,7% structured. Opt-in |
-| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA` | `0` | Retention interval for the EAGLE-exempt drafter group. Empty = automatic; `0` = reachable boundaries only; N = multiple of the scheduler block |
+| `VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA` | empty (auto) | Retention interval for the EAGLE-exempt drafter group. Empty = automatic rule (DFlash2: reachable boundaries); `0` = boundaries only; N = multiple of the scheduler block. Leave empty for MTP (no SWA group) |
 | `GLM53_APC_NO_STORE` | `1` | Honour `SamplingParams.skip_writing_prefix_cache` / `vllm_xargs` per request. A batch/eval request no longer evicts live conversations. `0` ignores the flag |
 | `GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC` | `1` | Export `vllm:prefix_cache_sparse_retention_misses` (observability only) |
 | `GLM53_WARMUP_PREFILL_TOKENS` | `0` | Optional post-`/health` prefill warmup: N words (~N tokens), then reset the prefix cache. 8192 removes the first-long-prompt JIT |

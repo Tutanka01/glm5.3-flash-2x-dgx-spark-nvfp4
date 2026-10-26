@@ -256,9 +256,10 @@ GLM53_FINE_GRAINED_APC="${GLM53_FINE_GRAINED_APC:-0}"
 # Per-group retention: keep MLA/mamba dense and the DFlash2 drafter at its
 # reachable boundaries. 0 = single global retention_interval (rollback).
 GLM53_APC_PER_GROUP_RETENTION="${GLM53_APC_PER_GROUP_RETENTION:-1}"
-# Retention interval for the EAGLE-exempt drafter group: empty = automatic;
-# 0 = reachable boundaries only; N = multiple of the scheduler block size.
-VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-0}"
+# Retention interval for the EAGLE-exempt drafter group: empty = automatic
+# (recommended; boundaries only for the DFlash2 SWA window); 0 = boundaries
+# only; N = multiple of the scheduler block size. Leave empty for MTP.
+VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-}"
 # Per-request write-side opt-out (SamplingParams.skip_writing_prefix_cache).
 GLM53_APC_NO_STORE="${GLM53_APC_NO_STORE:-1}"
 # Observability only: export vllm:prefix_cache_sparse_retention_misses.
