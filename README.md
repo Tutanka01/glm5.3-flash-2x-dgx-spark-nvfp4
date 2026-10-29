@@ -62,6 +62,35 @@ cp .env.example .env && $EDITOR .env
 Pour passer d'une lane à l'autre, arrêtez d'abord celle qui tourne
 (`sglang-nvfp4/stop-glm53.sh --profile <profil>` ou `vllm-exl3/stop.sh`).
 
+### Variante abliterated (sans refus)
+
+Disponible uniquement sur la lane **vLLM / EXL3**, désactivée par défaut. Un
+seul interrupteur, sur le head :
+
+```bash
+cd vllm-exl3
+ABLIT=1 ./start.sh restart        # ou ABLIT=1 dans .env pour la rendre permanente
+```
+
+Au premier démarrage, le head télécharge ~2,6 GiB de tenseurs `o_proj` du
+donneur épinglé (reprise possible), les copie sur le worker, et les deux rangs
+les substituent au chargement : aucun poids n'est réécrit sur disque.
+`ABLIT=0 ./start.sh restart` revient au modèle d'origine.
+
+- Vérification : `/v1/models` expose `GLM-5.3-Flash-EXL3-Ablit` (l'id
+  d'origine reste un alias) et les logs affichent `ablit: ON`.
+- Cache KV insuffisant au démarrage (`max seq len … KV cache is needed`) :
+  ajoutez `GLM53_INDEXER_WORKSPACE=rightsize`, ou baissez `MAX_MODEL_LEN`
+  sous le plafond indiqué par vLLM. Ne dépassez pas `GPU_MEM_UTIL=0.87`.
+- Après un crash, `./stop.sh` et vérifiez qu'aucun conteneur ne reste sur les
+  deux nœuds (`docker ps -a`) avant de relancer : sinon NCCL peut échouer
+  avec `ibv_reg_mr … Cannot allocate memory`.
+- Le modèle répond à tout : gardez la clé API et le filtrage réseau.
+
+Recette, garanties et réglages `ABLIT_*` :
+[vllm-exl3/README.md](vllm-exl3/README.md#variante-abliterated-ablit1) et
+[REFERENCE.md](vllm-exl3/REFERENCE.md#abliteration-ablit1).
+
 ## Organisation du dépôt
 
 ```text
@@ -73,7 +102,7 @@ Pour passer d'une lane à l'autre, arrêtez d'abord celle qui tourne
 │   ├── BENCHMARKS.md   journal unique des mesures des deux lanes
 │   ├── POWER.md        mesure de la consommation électrique
 │   ├── sglang/         audit, réseau, DFlash2, optimisation, dépannage
-│   ├── exl3/           qualité, issues connues, soak
+│   ├── exl3/           qualité, cache agentique, issues connues, soak
 │   └── img/            figures (courbes de puissance)
 ├── run-tests.sh    tous les tests sans GPU
 └── CREDITS.md

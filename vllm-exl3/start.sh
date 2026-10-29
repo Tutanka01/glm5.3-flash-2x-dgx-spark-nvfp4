@@ -67,9 +67,12 @@ _cli_temp_rows="${EXL3_TEMP_ROWS_FUSED-}"
 _cli_fat_sorted="${EXL3_FAT_SORTED-}"
 _cli_fat_batched="${EXL3_FAT_BATCHED-}"
 _cli_fat_kernel="${EXL3_FAT_KERNEL-}"
+_cli_fat_pipeline="${EXL3_FAT_PIPELINE-}"
+_cli_prefill_tokens="${GLM53_WARMUP_PREFILL_TOKENS-}"
 _cli_mnbt="${MAX_NUM_BATCHED_TOKENS-}"
 _cli_image="${IMAGE-}"
 _cli_util="${GPU_MEM_UTIL-}"
+_cli_max_model_len="${MAX_MODEL_LEN-}"
 _cli_lm="${LANGUAGE_MODEL_ONLY-}"
 _cli_max_num_seqs="${MAX_NUM_SEQS-}"
 _cli_ablit="${ABLIT-}"
@@ -85,6 +88,30 @@ _cli_indexer_workspace_set="${GLM53_INDEXER_WORKSPACE+1}"
 _cli_indexer_workspace="${GLM53_INDEXER_WORKSPACE-}"
 _cli_spinwait_ms_set="${GLM53_SPINWAIT_MS+1}"
 _cli_spinwait_ms="${GLM53_SPINWAIT_MS-}"
+_cli_fine_apc_set="${GLM53_FINE_GRAINED_APC+1}"
+_cli_fine_apc="${GLM53_FINE_GRAINED_APC-}"
+_cli_swa_retention_set="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA+1}"
+_cli_swa_retention="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-}"
+_cli_apc_no_store_set="${GLM53_APC_NO_STORE+1}"
+_cli_apc_no_store="${GLM53_APC_NO_STORE-}"
+_cli_apc_per_group_set="${GLM53_APC_PER_GROUP_RETENTION+1}"
+_cli_apc_per_group="${GLM53_APC_PER_GROUP_RETENTION-}"
+_cli_sparse_miss_set="${GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC+1}"
+_cli_sparse_miss="${GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC-}"
+_cli_align_floor_set="${GLM53_ALIGN_FLOOR+1}"
+_cli_align_floor="${GLM53_ALIGN_FLOOR-}"
+_cli_adaptive_k_set="${GLM53_ADAPTIVE_K+1}"
+_cli_adaptive_k="${GLM53_ADAPTIVE_K-}"
+_cli_adaptive_capture_set="${GLM53_ADAPTIVE_K_CAPTURE+1}"
+_cli_adaptive_capture="${GLM53_ADAPTIVE_K_CAPTURE-}"
+_cli_adaptive_set_set="${GLM53_ADAPTIVE_K_SET+1}"
+_cli_adaptive_set="${GLM53_ADAPTIVE_K_SET-}"
+_cli_adaptive_margin_set="${GLM53_ADAPTIVE_K_BATCH_MARGIN+1}"
+_cli_adaptive_margin="${GLM53_ADAPTIVE_K_BATCH_MARGIN-}"
+_cli_adaptive_pos_set="${GLM53_ADAPTIVE_K_POS_TRIM+1}"
+_cli_adaptive_pos="${GLM53_ADAPTIVE_K_POS_TRIM-}"
+_cli_adaptive_maxb_set="${GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH+1}"
+_cli_adaptive_maxb="${GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH-}"
 set -a
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.env"
@@ -98,9 +125,12 @@ set +a
 [ -n "${_cli_fat_sorted}" ] && EXL3_FAT_SORTED="$_cli_fat_sorted"
 [ -n "${_cli_fat_batched}" ] && EXL3_FAT_BATCHED="$_cli_fat_batched"
 [ -n "${_cli_fat_kernel}" ] && EXL3_FAT_KERNEL="$_cli_fat_kernel"
+[ -n "${_cli_fat_pipeline}" ] && EXL3_FAT_PIPELINE="$_cli_fat_pipeline"
+[ -n "${_cli_prefill_tokens}" ] && GLM53_WARMUP_PREFILL_TOKENS="$_cli_prefill_tokens"
 [ -n "${_cli_mnbt}" ] && MAX_NUM_BATCHED_TOKENS="$_cli_mnbt"
 [ -n "${_cli_image}" ] && IMAGE="$_cli_image"
 [ -n "${_cli_util}" ] && GPU_MEM_UTIL="$_cli_util"
+[ -n "${_cli_max_model_len}" ] && MAX_MODEL_LEN="$_cli_max_model_len"
 [ -n "${_cli_lm}" ] && LANGUAGE_MODEL_ONLY="$_cli_lm"
 [ -n "${_cli_max_num_seqs}" ] && MAX_NUM_SEQS="$_cli_max_num_seqs"
 [ -n "${_cli_ablit}" ] && ABLIT="$_cli_ablit"
@@ -112,6 +142,18 @@ set +a
 [ -n "${_cli_ablit_auto_fetch}" ] && ABLIT_AUTO_FETCH="$_cli_ablit_auto_fetch"
 [ -n "${_cli_indexer_workspace_set}" ] && GLM53_INDEXER_WORKSPACE="$_cli_indexer_workspace"
 [ -n "${_cli_spinwait_ms_set}" ] && GLM53_SPINWAIT_MS="$_cli_spinwait_ms"
+[ -n "${_cli_fine_apc_set}" ] && GLM53_FINE_GRAINED_APC="$_cli_fine_apc"
+[ -n "${_cli_swa_retention_set}" ] && VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="$_cli_swa_retention"
+[ -n "${_cli_apc_no_store_set}" ] && GLM53_APC_NO_STORE="$_cli_apc_no_store"
+[ -n "${_cli_apc_per_group_set}" ] && GLM53_APC_PER_GROUP_RETENTION="$_cli_apc_per_group"
+[ -n "${_cli_sparse_miss_set}" ] && GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC="$_cli_sparse_miss"
+[ -n "${_cli_align_floor_set}" ] && GLM53_ALIGN_FLOOR="$_cli_align_floor"
+[ -n "${_cli_adaptive_k_set}" ] && GLM53_ADAPTIVE_K="$_cli_adaptive_k"
+[ -n "${_cli_adaptive_capture_set}" ] && GLM53_ADAPTIVE_K_CAPTURE="$_cli_adaptive_capture"
+[ -n "${_cli_adaptive_set_set}" ] && GLM53_ADAPTIVE_K_SET="$_cli_adaptive_set"
+[ -n "${_cli_adaptive_margin_set}" ] && GLM53_ADAPTIVE_K_BATCH_MARGIN="$_cli_adaptive_margin"
+[ -n "${_cli_adaptive_pos_set}" ] && GLM53_ADAPTIVE_K_POS_TRIM="$_cli_adaptive_pos"
+[ -n "${_cli_adaptive_maxb_set}" ] && GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH="$_cli_adaptive_maxb"
 
 # ----------------------------- configuration -------------------------------
 MODEL="${MODEL:-Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw}"
@@ -196,6 +238,47 @@ KPOOL_TAIL_PATCH_HOST="${KPOOL_TAIL_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_kpool_
 SPINWAIT_PATCH_HOST="${SPINWAIT_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_spinwait.py}"
 # Local vendor fix (issue #31): cache-reset dev routes, absent upstream.
 CACHE_RESET_PATCH_HOST="${CACHE_RESET_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_cache_reset.py}"
+# Agentic prefix-cache v2 (ported from the Apache-2.0 Reederey87 kit).
+# Order matters: hybrid hit narrowing -> per-group retention -> fine-grained
+# hit veto -> sparse-miss metric -> per-request no-store.
+FGAPC_PATCH_HOST="${FGAPC_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_fine_grained_apc.py}"
+APC_PER_GROUP_PATCH_HOST="${APC_PER_GROUP_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_apc_per_group_retention.py}"
+APC_NO_STORE_PATCH_HOST="${APC_NO_STORE_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_apc_no_store.py}"
+PREFIX_CACHE_SPARSE_MISS_PATCH_HOST="${PREFIX_CACHE_SPARSE_MISS_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_prefix_cache_sparse_miss_metric.py}"
+# Verification-only adaptive-K for DFlash2 (default off) and its align-floor
+# prerequisite. Both are runtime overlays; no image rebuild.
+ALIGN_FLOOR_PATCH_HOST="${ALIGN_FLOOR_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_align_floor.py}"
+ADAPTIVE_K_PATCH_HOST="${ADAPTIVE_K_PATCH_HOST:-$SCRIPT_DIR/overlay/patch_adaptive_k.py}"
+# Fine-grained APC is the sub-page hit win, but it changes hit granularity
+# (measured -2.7% structured decode on the reference kit). Opt-in until the
+# same-kit A/B is recorded; 0 keeps the 3584-token page floor.
+GLM53_FINE_GRAINED_APC="${GLM53_FINE_GRAINED_APC:-0}"
+# Per-group retention: keep MLA/mamba dense and the DFlash2 drafter at its
+# reachable boundaries. 0 = single global retention_interval (rollback).
+GLM53_APC_PER_GROUP_RETENTION="${GLM53_APC_PER_GROUP_RETENTION:-1}"
+# Retention interval for the EAGLE-exempt drafter group: empty = automatic
+# (recommended; boundaries only for the DFlash2 SWA window); 0 = boundaries
+# only; N = multiple of the scheduler block size. Leave empty for MTP.
+VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA="${VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA-}"
+# Per-request write-side opt-out (SamplingParams.skip_writing_prefix_cache).
+GLM53_APC_NO_STORE="${GLM53_APC_NO_STORE:-1}"
+# Observability only: export vllm:prefix_cache_sparse_retention_misses.
+GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC="${GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC:-1}"
+# --- adaptive verification length (DFlash2, default off) -------------------
+# Trims request.spec_token_ids only; never the drafter execution. See
+# docs/DESIGN-adaptive-k.md. Align floor is dormant at LPTT < 3584.
+GLM53_ALIGN_FLOOR="${GLM53_ALIGN_FLOOR:-1}"
+GLM53_ADAPTIVE_K="${GLM53_ADAPTIVE_K:-off}"
+GLM53_ADAPTIVE_K_CAPTURE="${GLM53_ADAPTIVE_K_CAPTURE:-0}"
+GLM53_ADAPTIVE_K_SET="${GLM53_ADAPTIVE_K_SET:-2,4,7}"
+GLM53_ADAPTIVE_K_ALPHA="${GLM53_ADAPTIVE_K_ALPHA:-0.25}"
+GLM53_ADAPTIVE_K_MARGIN="${GLM53_ADAPTIVE_K_MARGIN:-1.0}"
+GLM53_ADAPTIVE_K_MIN_STEPS="${GLM53_ADAPTIVE_K_MIN_STEPS:-4}"
+GLM53_ADAPTIVE_K_SATURATE="${GLM53_ADAPTIVE_K_SATURATE:-max}"
+GLM53_ADAPTIVE_K_HIST="${GLM53_ADAPTIVE_K_HIST:-200}"
+GLM53_ADAPTIVE_K_BATCH_MARGIN="${GLM53_ADAPTIVE_K_BATCH_MARGIN:-0}"
+GLM53_ADAPTIVE_K_POS_TRIM="${GLM53_ADAPTIVE_K_POS_TRIM:-0}"
+GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH="${GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH:-4}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8}"
 QUANTIZATION="${QUANTIZATION:-exl3}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"
@@ -215,7 +298,24 @@ if [ "${ENFORCE_EAGER}" != "1" ]; then
         *" --cudagraph-capture-sizes "*|*" cudagraph-capture-sizes "*) ;;
         *)
             if [ "$SPEC_METHOD" = "dflash" ]; then
-                EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes 1 2 4 8 16 24 32"
+                _cap="1 2 4 8 16 24 32"
+                case "${GLM53_ADAPTIVE_K:-off}:${GLM53_ADAPTIVE_K_CAPTURE:-0}" in
+                    ema:*|on:*|1:*|*:1|*:on|*:true|*:yes)
+                        # Extra target verify lens k+1 for SET=2,4,7 -> 3 and 5.
+                        _maxb="${GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH:-4}"
+                        for _s in $(seq 1 "$_maxb"); do
+                            _cap="$_cap $((_s * 3)) $((_s * 5))"
+                        done
+                        ;;
+                esac
+                # Full-k rows above C4 are not in the stock list (C6=48, C8=64).
+                if [ "${MAX_NUM_SEQS:-4}" -gt 4 ]; then
+                    for _c in $(seq 5 "${MAX_NUM_SEQS}"); do
+                        _cap="$_cap $((_c * 8))"
+                    done
+                fi
+                _cap=$(printf '%s\n' $_cap | sort -n | uniq | tr '\n' ' ')
+                EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes ${_cap% }"
             else
                 EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--cudagraph-capture-sizes 1 2 3 4 6 8 12"
             fi
@@ -237,6 +337,9 @@ EXL3_FAT_BATCHED="${EXL3_FAT_BATCHED:-0}"
 # Needs the patched extension — start.sh rebuilds when the recipe stamp drifts.
 # Set all three flags to 0 for the legacy fat-expert path.
 EXL3_FAT_KERNEL="${EXL3_FAT_KERNEL:-1}"
+# 1 = 3-stage cp.async fat-GEMM variant (Reederey87 S2b, Apache-2.0).
+# Same ABI/semantics as exl3_fat_gemm; opt-in until the same-kit A/B.
+EXL3_FAT_PIPELINE="${EXL3_FAT_PIPELINE:-0}"
 
 # --- abliteration (ablit/) --------------------------------------------------
 # Load-time o_proj transplant (overlay/ablit_runtime.py). Published recipe
@@ -286,6 +389,9 @@ GLM53_SPINWAIT_MS="${GLM53_SPINWAIT_MS-stock}"
 VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS="${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800}"
 # 1 = after /health, burn DFlash2 BLOCK / sampler / kpool shapes. Nonfatal.
 GLM53_BOOT_SHAPE_WARMUP="${GLM53_BOOT_SHAPE_WARMUP:-1}"
+# Optional prefill warmup after /health: N words (~N tokens) to compile the
+# MoE/KDA/MLA prefill shapes; the cache is reset afterwards. 0 = off.
+GLM53_WARMUP_PREFILL_TOKENS="${GLM53_WARMUP_PREFILL_TOKENS:-0}"
 GLM53_WARMUP_REQ_TIMEOUT="${GLM53_WARMUP_REQ_TIMEOUT:-240}"
 
 # OpenAI-compatible API bearer token. Read the native VLLM_API_KEY env var
@@ -372,6 +478,35 @@ _glm53_validate_spinwait_ms() {
         GLM53_SPINWAIT_MS "$GLM53_SPINWAIT_MS" 1000
 }
 
+# Non-negative integer, 0 allowed (warmup token budgets, histogram windows).
+_glm53_validate_nonneg_int() {
+    local name="$1" value="$2" maximum="$3"
+    if [ "$value" = "0" ]; then
+        printf -v "$name" '%s' 0
+        export "$name"
+        return 0
+    fi
+    _glm53_canonical_positive_int "$name" "$value" "$maximum"
+}
+
+# Comma-separated positive integers, e.g. GLM53_ADAPTIVE_K_SET=2,4,7.
+_glm53_validate_int_list() {
+    local name="$1" value="$2" maximum="$3" item
+    case "$value" in
+        ''|*[!0-9,]*|,*|*,|*,,*)
+            echo "$name must be a comma-separated list of positive integers (got: $value)" >&2
+            return 2
+            ;;
+    esac
+    local IFS=','
+    for item in $value; do
+        if [ "$item" -lt 1 ] || [ "$item" -gt "$maximum" ]; then
+            echo "$name items must be between 1 and $maximum (got: $value)" >&2
+            return 2
+        fi
+    done
+}
+
 validate_numeric_config() {
     if ! [[ "$GPU_MEM_UTIL" =~ ^(0([.][0-9]+)?|[.][0-9]+|1([.]0+)?)$ ]] \
        || ! awk -v u="$GPU_MEM_UTIL" 'BEGIN { exit !(u > 0 && u <= 1) }'; then
@@ -384,6 +519,19 @@ validate_numeric_config() {
     _glm53_validate_enum GLM53_INDEXER_WORKSPACE "${GLM53_INDEXER_WORKSPACE-stock}" \
         stock rightsize || return
     _glm53_validate_spinwait_ms || return
+    # Prefix-cache v2 and adaptive-K / fat-pipeline knobs. The `-default`
+    # form keeps the guard testable on its own (unset -> documented default)
+    # while an explicitly empty value still fails the enum.
+    _glm53_validate_enum GLM53_FINE_GRAINED_APC "${GLM53_FINE_GRAINED_APC-0}" 0 1 || return
+    _glm53_validate_enum GLM53_APC_PER_GROUP_RETENTION "${GLM53_APC_PER_GROUP_RETENTION-1}" 0 1 || return
+    _glm53_validate_enum GLM53_APC_NO_STORE "${GLM53_APC_NO_STORE-1}" 0 1 || return
+    _glm53_validate_enum GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC "${GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC-1}" 0 1 || return
+    _glm53_validate_enum GLM53_ALIGN_FLOOR "${GLM53_ALIGN_FLOOR-1}" 0 1 off on false true no yes || return
+    _glm53_validate_enum GLM53_ADAPTIVE_K "${GLM53_ADAPTIVE_K-off}" off ema on 1 || return
+    _glm53_validate_enum GLM53_ADAPTIVE_K_CAPTURE "${GLM53_ADAPTIVE_K_CAPTURE-0}" 0 1 on off true false yes no || return
+    _glm53_validate_int_list GLM53_ADAPTIVE_K_SET "${GLM53_ADAPTIVE_K_SET-2,4,7}" 64 || return
+    _glm53_validate_enum EXL3_FAT_PIPELINE "${EXL3_FAT_PIPELINE-0}" 0 1 || return
+    _glm53_validate_nonneg_int GLM53_WARMUP_PREFILL_TOKENS "${GLM53_WARMUP_PREFILL_TOKENS-0}" 1000000 || return
 }
 # GLM53 numeric config guard (end)
 
@@ -519,6 +667,12 @@ preflight() {
     [ -f "$SCHED_PATCH_HOST" ] || die "$SCHED_PATCH_HOST missing"
     [ -f "$DRAFTER_PATCH_HOST" ] || die "$DRAFTER_PATCH_HOST missing"
     [ -f "$APC_PATCH_HOST" ] || die "$APC_PATCH_HOST missing"
+    [ -f "$FGAPC_PATCH_HOST" ] || die "$FGAPC_PATCH_HOST missing"
+    [ -f "$APC_PER_GROUP_PATCH_HOST" ] || die "$APC_PER_GROUP_PATCH_HOST missing"
+    [ -f "$APC_NO_STORE_PATCH_HOST" ] || die "$APC_NO_STORE_PATCH_HOST missing"
+    [ -f "$PREFIX_CACHE_SPARSE_MISS_PATCH_HOST" ] || die "$PREFIX_CACHE_SPARSE_MISS_PATCH_HOST missing"
+    [ -f "$ALIGN_FLOOR_PATCH_HOST" ] || die "$ALIGN_FLOOR_PATCH_HOST missing"
+    [ -f "$ADAPTIVE_K_PATCH_HOST" ] || die "$ADAPTIVE_K_PATCH_HOST missing"
     [ -f "$XGRAMMAR_PATCH_HOST" ] || die "$XGRAMMAR_PATCH_HOST missing"
     [ -f "$KPOOL_TAIL_PATCH_HOST" ] || die "$KPOOL_TAIL_PATCH_HOST missing"
     [ -f "$SPINWAIT_PATCH_HOST" ] || die "$SPINWAIT_PATCH_HOST missing"
@@ -1041,11 +1195,29 @@ fi
 if [ -f /opt/glm53/patch_scheduler_decode_floor.py ]; then
     python3 /opt/glm53/patch_scheduler_decode_floor.py
 fi
+if [ -f /opt/glm53/patch_align_floor.py ]; then
+    python3 /opt/glm53/patch_align_floor.py
+fi
+if [ -f /opt/glm53/patch_adaptive_k.py ]; then
+    python3 /opt/glm53/patch_adaptive_k.py
+fi
 if [ -f /opt/glm53/patch_glm5_drafter_group.py ]; then
     python3 /opt/glm53/patch_glm5_drafter_group.py
 fi
 if [ -f /opt/glm53/patch_hybrid_prefix_hit.py ]; then
     python3 /opt/glm53/patch_hybrid_prefix_hit.py
+fi
+if [ -f /opt/glm53/patch_apc_per_group_retention.py ]; then
+    python3 /opt/glm53/patch_apc_per_group_retention.py
+fi
+if [ -f /opt/glm53/patch_fine_grained_apc.py ]; then
+    python3 /opt/glm53/patch_fine_grained_apc.py
+fi
+if [ -f /opt/glm53/patch_prefix_cache_sparse_miss_metric.py ]; then
+    python3 /opt/glm53/patch_prefix_cache_sparse_miss_metric.py
+fi
+if [ -f /opt/glm53/patch_apc_no_store.py ]; then
+    python3 /opt/glm53/patch_apc_no_store.py
 fi
 if [ -f /opt/glm53/patch_xgrammar_termination.py ]; then
     python3 /opt/glm53/patch_xgrammar_termination.py
@@ -1140,11 +1312,29 @@ fi
 if [ -f /opt/glm53/patch_scheduler_decode_floor.py ]; then
     python3 /opt/glm53/patch_scheduler_decode_floor.py
 fi
+if [ -f /opt/glm53/patch_align_floor.py ]; then
+    python3 /opt/glm53/patch_align_floor.py
+fi
+if [ -f /opt/glm53/patch_adaptive_k.py ]; then
+    python3 /opt/glm53/patch_adaptive_k.py
+fi
 if [ -f /opt/glm53/patch_glm5_drafter_group.py ]; then
     python3 /opt/glm53/patch_glm5_drafter_group.py
 fi
 if [ -f /opt/glm53/patch_hybrid_prefix_hit.py ]; then
     python3 /opt/glm53/patch_hybrid_prefix_hit.py
+fi
+if [ -f /opt/glm53/patch_apc_per_group_retention.py ]; then
+    python3 /opt/glm53/patch_apc_per_group_retention.py
+fi
+if [ -f /opt/glm53/patch_fine_grained_apc.py ]; then
+    python3 /opt/glm53/patch_fine_grained_apc.py
+fi
+if [ -f /opt/glm53/patch_prefix_cache_sparse_miss_metric.py ]; then
+    python3 /opt/glm53/patch_prefix_cache_sparse_miss_metric.py
+fi
+if [ -f /opt/glm53/patch_apc_no_store.py ]; then
+    python3 /opt/glm53/patch_apc_no_store.py
 fi
 if [ -f /opt/glm53/patch_xgrammar_termination.py ]; then
     python3 /opt/glm53/patch_xgrammar_termination.py
@@ -1194,7 +1384,17 @@ launch_cluster() {
     [ -f "$DRAFTER_PATCH_HOST" ] || die "missing $DRAFTER_PATCH_HOST"
     scp -q -o BatchMode=yes "$DRAFTER_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_glm5_drafter_group.py"
     [ -f "$APC_PATCH_HOST" ] || die "missing $APC_PATCH_HOST"
+    [ -f "$FGAPC_PATCH_HOST" ] || die "missing $FGAPC_PATCH_HOST"
+    [ -f "$APC_PER_GROUP_PATCH_HOST" ] || die "missing $APC_PER_GROUP_PATCH_HOST"
+    [ -f "$APC_NO_STORE_PATCH_HOST" ] || die "missing $APC_NO_STORE_PATCH_HOST"
+    [ -f "$PREFIX_CACHE_SPARSE_MISS_PATCH_HOST" ] || die "missing $PREFIX_CACHE_SPARSE_MISS_PATCH_HOST"
     scp -q -o BatchMode=yes "$APC_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_hybrid_prefix_hit.py"
+    scp -q -o BatchMode=yes "$FGAPC_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_fine_grained_apc.py"
+    scp -q -o BatchMode=yes "$APC_PER_GROUP_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_apc_per_group_retention.py"
+    scp -q -o BatchMode=yes "$APC_NO_STORE_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_apc_no_store.py"
+    scp -q -o BatchMode=yes "$PREFIX_CACHE_SPARSE_MISS_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_prefix_cache_sparse_miss_metric.py"
+    scp -q -o BatchMode=yes "$ALIGN_FLOOR_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_align_floor.py"
+    scp -q -o BatchMode=yes "$ADAPTIVE_K_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_adaptive_k.py"
     [ -f "$XGRAMMAR_PATCH_HOST" ] || die "missing $XGRAMMAR_PATCH_HOST"
     scp -q -o BatchMode=yes "$XGRAMMAR_PATCH_HOST" "${WORKER_SSH}:/tmp/patch_xgrammar_termination.py"
     [ -f "$KPOOL_TAIL_PATCH_HOST" ] || die "missing $KPOOL_TAIL_PATCH_HOST"
@@ -1232,6 +1432,23 @@ launch_cluster() {
         -e "GLM53_EXPOSE_CACHE_RESET=$GLM53_EXPOSE_CACHE_RESET"
         -e "GLM53_INDEXER_WORKSPACE=$GLM53_INDEXER_WORKSPACE"
         -e "GLM53_SPINWAIT_MS=$GLM53_SPINWAIT_MS"
+        -e "GLM53_FINE_GRAINED_APC=$GLM53_FINE_GRAINED_APC"
+        -e "GLM53_APC_PER_GROUP_RETENTION=$GLM53_APC_PER_GROUP_RETENTION"
+        -e "VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA=$VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA"
+        -e "GLM53_APC_NO_STORE=$GLM53_APC_NO_STORE"
+        -e "GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC=$GLM53_PREFIX_CACHE_SPARSE_MISS_METRIC"
+        -e "GLM53_ALIGN_FLOOR=$GLM53_ALIGN_FLOOR"
+        -e "GLM53_ADAPTIVE_K=$GLM53_ADAPTIVE_K"
+        -e "GLM53_ADAPTIVE_K_CAPTURE=$GLM53_ADAPTIVE_K_CAPTURE"
+        -e "GLM53_ADAPTIVE_K_SET=$GLM53_ADAPTIVE_K_SET"
+        -e "GLM53_ADAPTIVE_K_ALPHA=$GLM53_ADAPTIVE_K_ALPHA"
+        -e "GLM53_ADAPTIVE_K_MARGIN=$GLM53_ADAPTIVE_K_MARGIN"
+        -e "GLM53_ADAPTIVE_K_MIN_STEPS=$GLM53_ADAPTIVE_K_MIN_STEPS"
+        -e "GLM53_ADAPTIVE_K_SATURATE=$GLM53_ADAPTIVE_K_SATURATE"
+        -e "GLM53_ADAPTIVE_K_HIST=$GLM53_ADAPTIVE_K_HIST"
+        -e "GLM53_ADAPTIVE_K_BATCH_MARGIN=$GLM53_ADAPTIVE_K_BATCH_MARGIN"
+        -e "GLM53_ADAPTIVE_K_POS_TRIM=$GLM53_ADAPTIVE_K_POS_TRIM"
+        -e "GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH=$GLM53_ADAPTIVE_K_CAPTURE_MAX_BATCH"
         -e "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         -e "TILELANG_CACHE_DIR=$TILELANG_CACHE_DIR"
         -e "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=$VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"
@@ -1275,7 +1492,7 @@ launch_cluster() {
              KV_CACHE_DTYPE MTP_TOKENS SPEC_METHOD DFLASH_TOKENS DFLASH_MODEL_DIR \
              DFLASH_DRAFT_TP \
              LANGUAGE_MODEL_ONLY SKIP_MM_PROFILING \
-             LIMIT_MM CHAT_TEMPLATE ENFORCE_EAGER EXL3_FUSED_MOE EXL3_MOE_ROW_TILE EXL3_TEMP_ROWS_FUSED EXL3_FAT_SORTED EXL3_FAT_BATCHED EXL3_FAT_KERNEL MODEL_DIR EXTRA_ARGS \
+             LIMIT_MM CHAT_TEMPLATE ENFORCE_EAGER EXL3_FUSED_MOE EXL3_MOE_ROW_TILE EXL3_TEMP_ROWS_FUSED EXL3_FAT_SORTED EXL3_FAT_BATCHED EXL3_FAT_KERNEL EXL3_FAT_PIPELINE MODEL_DIR EXTRA_ARGS \
              ABLIT ABLIT_METHOD ABLIT_DIRECTION ABLIT_LAYERS ABLIT_ALPHA ABLIT_INCLUDE_MTP; do
         serve_env+=" -e $v='${!v:-}'"
     done
@@ -1302,6 +1519,12 @@ launch_cluster() {
         -v '/tmp/patch_scheduler_decode_floor.py:/opt/glm53/patch_scheduler_decode_floor.py:ro' \
         -v '/tmp/patch_glm5_drafter_group.py:/opt/glm53/patch_glm5_drafter_group.py:ro' \
         -v '/tmp/patch_hybrid_prefix_hit.py:/opt/glm53/patch_hybrid_prefix_hit.py:ro' \
+        -v '/tmp/patch_fine_grained_apc.py:/opt/glm53/patch_fine_grained_apc.py:ro' \
+        -v '/tmp/patch_apc_per_group_retention.py:/opt/glm53/patch_apc_per_group_retention.py:ro' \
+        -v '/tmp/patch_apc_no_store.py:/opt/glm53/patch_apc_no_store.py:ro' \
+        -v '/tmp/patch_prefix_cache_sparse_miss_metric.py:/opt/glm53/patch_prefix_cache_sparse_miss_metric.py:ro' \
+        -v '/tmp/patch_align_floor.py:/opt/glm53/patch_align_floor.py:ro' \
+        -v '/tmp/patch_adaptive_k.py:/opt/glm53/patch_adaptive_k.py:ro' \
         -v '/tmp/patch_xgrammar_termination.py:/opt/glm53/patch_xgrammar_termination.py:ro' \
         -v '/tmp/patch_cache_reset.py:/opt/glm53/patch_cache_reset.py:ro' \
         -v '/tmp/patch_kpool_tail_slotmap.py:/opt/glm53/patch_kpool_tail_slotmap.py:ro' \
@@ -1335,6 +1558,12 @@ launch_cluster() {
         -v "$SCHED_PATCH_HOST:/opt/glm53/patch_scheduler_decode_floor.py:ro" \
         -v "$DRAFTER_PATCH_HOST:/opt/glm53/patch_glm5_drafter_group.py:ro" \
         -v "$APC_PATCH_HOST:/opt/glm53/patch_hybrid_prefix_hit.py:ro" \
+        -v "$FGAPC_PATCH_HOST:/opt/glm53/patch_fine_grained_apc.py:ro" \
+        -v "$APC_PER_GROUP_PATCH_HOST:/opt/glm53/patch_apc_per_group_retention.py:ro" \
+        -v "$APC_NO_STORE_PATCH_HOST:/opt/glm53/patch_apc_no_store.py:ro" \
+        -v "$PREFIX_CACHE_SPARSE_MISS_PATCH_HOST:/opt/glm53/patch_prefix_cache_sparse_miss_metric.py:ro" \
+        -v "$ALIGN_FLOOR_PATCH_HOST:/opt/glm53/patch_align_floor.py:ro" \
+        -v "$ADAPTIVE_K_PATCH_HOST:/opt/glm53/patch_adaptive_k.py:ro" \
         -v "$XGRAMMAR_PATCH_HOST:/opt/glm53/patch_xgrammar_termination.py:ro" \
         -v "$CACHE_RESET_PATCH_HOST:/opt/glm53/patch_cache_reset.py:ro" \
         -v "$KPOOL_TAIL_PATCH_HOST:/opt/glm53/patch_kpool_tail_slotmap.py:ro" \
@@ -1373,6 +1602,7 @@ launch_cluster() {
         -e EXL3_FAT_SORTED="$EXL3_FAT_SORTED" \
         -e EXL3_FAT_BATCHED="$EXL3_FAT_BATCHED" \
         -e EXL3_FAT_KERNEL="$EXL3_FAT_KERNEL" \
+        -e EXL3_FAT_PIPELINE="$EXL3_FAT_PIPELINE" \
         -e ABLIT="$ABLIT" \
         -e ABLIT_METHOD="$ABLIT_METHOD" \
         -e ABLIT_DIRECTION="$ABLIT_DIRECTION" \
@@ -1451,6 +1681,7 @@ post_ready_warmup() {
     GLM53_WARMUP_MAX_CONCURRENCY="$MAX_NUM_SEQS" \
     GLM53_WARMUP_REQ_TIMEOUT="$GLM53_WARMUP_REQ_TIMEOUT" \
     GLM53_WARMUP_DFLASH_K="${DFLASH_TOKENS:-7}" \
+    GLM53_WARMUP_PREFILL_TOKENS="$GLM53_WARMUP_PREFILL_TOKENS" \
     GLM53_WARMUP_TRITON_CACHE_DIR="$TRITON_HOST_CACHE" \
     GLM53_WARMUP_BEARER="${VLLM_API_KEY:-}" \
         bash "$SCRIPT_DIR/scripts/boot-shape-warmup.sh" \
@@ -1519,7 +1750,8 @@ start() {
         log "DFlash2 load path (in-container): ${DFLASH_MODEL_DIR}"
     fi
     log "model load path (in-container): ${MODEL_DIR}"
-    log "config: image=${IMAGE} tp=${TP} nnodes=${NNODES} quant=${QUANTIZATION} spec=${SPEC_METHOD} mtp=${MTP_TOKENS} dflash_k=${DFLASH_TOKENS} max-len=${MAX_MODEL_LEN} gpu-util=${GPU_MEM_UTIL} kv=${KV_CACHE_DTYPE} lm-only=${LANGUAGE_MODEL_ONLY} port=${PORT}"
+    log "config: image=${IMAGE} tp=${TP} nnodes=${NNODES} quant=${QUANTIZATION} spec=${SPEC_METHOD} mtp=${MTP_TOKENS} dflash_k=${DFLASH_TOKENS} max-len=${MAX_MODEL_LEN} gpu-util=${GPU_MEM_UTIL} kv=${KV_CACHE_DTYPE} lm-only=${LANGUAGE_MODEL_ONLY} port=${PORT} fat-pipeline=${EXL3_FAT_PIPELINE}"
+    log "memory: indexer-workspace=${GLM53_INDEXER_WORKSPACE} cg-estimate=${CG_ESTIMATE} max-num-seqs=${MAX_NUM_SEQS} max-num-batched-tokens=${MAX_NUM_BATCHED_TOKENS}"
 
     launch_cluster
     if wait_for_health; then

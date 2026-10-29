@@ -1,0 +1,33 @@
+vllm-exl3 — third-party notices
+================================
+
+This lane vendors MIT code from MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks at
+commit e25aa70 (see LICENSE and CREDITS.md).
+
+The following files are ported from the Apache-2.0 project
+Reederey87/glm53-flash-exl3-2x-dgx-spark
+(https://github.com/Reederey87/glm53-flash-exl3-2x-dgx-spark), with local
+adaptations for this repository:
+
+  overlay/patch_fine_grained_apc.py
+  overlay/patch_apc_per_group_retention.py
+  overlay/patch_apc_no_store.py
+  overlay/patch_prefix_cache_sparse_miss_metric.py
+  overlay/patch_align_floor.py
+  overlay/patch_adaptive_k.py
+  overlay/exl3_fat_gemm_pipe.cu
+  overlay/exl3_fat_gemm_pipe.cuh
+  tests/test_fine_grained_apc_overlay.py
+  tests/test_apc_per_group_retention.py
+  tests/test_apc_no_store.py
+  tests/test_prefix_cache_sparse_miss_metric.py
+  tests/test_adaptive_k_patch.py
+  tests/test_align_floor.py
+
+Those files retain an SPDX-License-Identifier: Apache-2.0 header where they are
+source files. The Apache-2.0 license text is available at
+https://www.apache.org/licenses/LICENSE-2.0.
+
+Ideas and measurements from
+MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks-TensorFold (Apache-2.0) are cited
+in docs/DESIGN-*.md; no TensorFold code is included in this pass.

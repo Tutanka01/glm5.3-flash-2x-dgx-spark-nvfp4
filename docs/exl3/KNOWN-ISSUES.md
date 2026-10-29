@@ -69,6 +69,24 @@ image; later-position acceptance collapses (0.918 → ~0.31 structured).
 SM121 picks `FLASH_ATTN` for the non-causal SWA drafter by default. See
 `QUALITY.md`.
 
+## Prefix cache under multi-session agent traffic
+
+The hybrid KDA+MLA cache is page-aligned at **3584 tokens**. A group that
+misses its KDA checkpoint can veto every attention hit: the counters read 0 %
+with no error. Single-session replay (85 % / 4.1×) does not prove the
+multi-session case. Before blaming the scheduler, run:
+
+```bash
+python3 vllm-exl3/tests/bench_cache_sessions.py \
+  --sessions 4 --ctx-tokens 60000 --rounds 3 --salt "$(date +%s)"
+```
+
+Round 1 is cold; a healthy round ≥2 is ≥ 90 % hit. The v2 bundle
+(`GLM53_APC_PER_GROUP_RETENTION=1`, optional `GLM53_FINE_GRAINED_APC=1`,
+`GLM53_APC_NO_STORE=1`, sparse-miss metric) is documented in
+[PREFIX-CACHE.md](PREFIX-CACHE.md). Fine-grained APC is opt-in because the
+reference kit measured −2,7 % structured decode; validate before flipping it.
+
 ## Memory / sizing pitfalls (upstream README, condensed)
 
 - `--kv-cache-dtype fp8` → packed `fp8_ds_mla` is **required**: bf16 KV has no
@@ -76,6 +94,8 @@ SM121 picks `FLASH_ATTN` for the non-causal SWA drafter by default. See
 - Do **not** lower `MAX_MODEL_LEN` to "free" KV: logged pool tokens ≈
   concurrency × the cap, and the hybrid (mamba + DFlash window) floor is
   mostly length-independent — shrinking the cap shrinks the pool.
+  If KV capacity prevents startup, inspect the indexer workspace and other
+  reservations; see the [1M-context diagnosis](../../vllm-exl3/README.md#contexte-maximal--cache-kv-insuffisant-au-démarrage).
 - Keep `SKIP_MM_PROFILING=1` with vision on; the max-size dummy profile OOMs
   this UMA.
 - `GPU_MEM_UTIL=0.87` needs ≥105.9 GiB free after vLLM's ~9 GiB init. Nodes
