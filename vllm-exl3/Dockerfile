@@ -457,6 +457,9 @@ COPY tests/test_xgrammar_termination.py /opt/glm53/test_xgrammar_termination.py
 # Local vendor fix (issue #31): cache-reset dev routes, absent upstream.
 COPY overlay/patch_cache_reset.py /opt/glm53/patch_cache_reset.py
 COPY tests/test_cache_reset_endpoint.py /opt/glm53/test_cache_reset_endpoint.py
+# VLLM_API_KEY guards every route, not only /v1 (root /invocations generates).
+COPY overlay/patch_auth_all_routes.py /opt/glm53/patch_auth_all_routes.py
+COPY tests/test_auth_all_routes.py /opt/glm53/test_auth_all_routes.py
 COPY overlay/patch_kpool_tail_slotmap.py /opt/glm53/patch_kpool_tail_slotmap.py
 COPY tests/test_kpool_tail_slotmap.py /opt/glm53/test_kpool_tail_slotmap.py
 COPY overlay/patch_spinwait.py /opt/glm53/patch_spinwait.py
@@ -476,6 +479,7 @@ RUN python3 /opt/glm53/patch_scheduler_decode_floor.py
 RUN python3 /opt/glm53/patch_hybrid_prefix_hit.py
 RUN python3 /opt/glm53/patch_xgrammar_termination.py
 RUN python3 /opt/glm53/patch_cache_reset.py
+RUN python3 /opt/glm53/patch_auth_all_routes.py
 RUN python3 /opt/glm53/patch_kpool_tail_slotmap.py
 # Applied unconditionally; the injected sizing reads GLM53_INDEXER_WORKSPACE
 # at runtime and returns the stock expression unless it is "rightsize".
@@ -489,6 +493,7 @@ RUN EXL3_SELFCHECK_GPU=0 python3 /opt/glm53/test_exl3_overlay.py \
     && python3 /opt/glm53/test_hybrid_prefix_hit.py \
     && python3 /opt/glm53/test_xgrammar_termination.py \
     && python3 /opt/glm53/test_cache_reset_endpoint.py \
+    && python3 /opt/glm53/test_auth_all_routes.py \
     && python3 /opt/glm53/test_kpool_tail_slotmap.py \
     && python3 /opt/glm53/test_spinwait_patch.py \
     && python3 /opt/glm53/test_indexer_workspace.py \

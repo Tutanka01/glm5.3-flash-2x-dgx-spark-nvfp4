@@ -54,7 +54,7 @@ else
 fi
 
 # 5. vendor pure-python tests
-for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination test_suppress_stops test_ablit_fetch; do
+for t in test_start_overrides test_warm_restart_stdout test_xgrammar_termination test_suppress_stops test_ablit_fetch test_auth_all_routes; do
     if python3 "tests/${t}.py" >/dev/null 2>&1; then ok "$t"; else bad "$t"; fi
 done
 

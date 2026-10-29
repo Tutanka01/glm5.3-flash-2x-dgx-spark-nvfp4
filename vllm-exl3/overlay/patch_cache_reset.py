@@ -17,12 +17,12 @@ precedence (full dev mounts, as upstream). The flag is read at
 ``build_app`` time, so toggling it needs a container restart but not a
 re-patch.
 
-Auth note (upstream quirk, documented in the README): the
-``AuthenticationMiddleware`` only guards ``GUARDED_PREFIX = ("/v1", "/v2",
-"/inference", "/cohere")``, so root-mounted routes — including the stock
-``/tokenize`` and the cache-reset routes — answer without a bearer even
-when ``VLLM_API_KEY`` is set. A cache reset can flush serving state, so
-set ``GLM53_EXPOSE_CACHE_RESET=0`` on shared kits.
+Auth note: upstream ``AuthenticationMiddleware`` only guards
+``GUARDED_PREFIX = ("/v1", "/v2", "/inference", "/cohere")``, so these
+root-mounted routes would answer without a bearer even when
+``VLLM_API_KEY`` is set; ``patch_auth_all_routes.py`` closes that on the
+head. Without a key they stay open to the LAN, and a cache reset can flush
+serving state, so set ``GLM53_EXPOSE_CACHE_RESET=0`` on shared keyless kits.
 
 Fail closed if the vLLM anchors drift.
 """

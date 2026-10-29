@@ -458,11 +458,15 @@ and weights, does not change the supported 2× path. First run copies
 Do not pull `glm53-flash-sm121:v8` — that is the older NVFP4/Ray kernel.
 
 API: `http://127.0.0.1:8888/v1` (LAN: `http://10.0.0.1:8888/v1`).
-`/v1` is unauthenticated unless you set `VLLM_API_KEY` in `.env` (opt-in;
-empty = no auth). vLLM reads the env var natively so the key never lands in
-argv. `/health` and `/metrics` stay unguarded. Restart after setting it.
-Clients then send `Authorization: Bearer <key>` on `/v1` (warmup already
-picks it up via `GLM53_WARMUP_BEARER`).
+The API is unauthenticated unless you set `VLLM_API_KEY` in `.env` (opt-in;
+empty = no auth, stock behaviour). vLLM reads the env var natively so the key
+never lands in argv. Restart after setting it. Clients then send
+`Authorization: Bearer <key>` — the standard OpenAI SDK `api_key` — and get
+`401` without it (warmup already picks it up via `GLM53_WARMUP_BEARER`).
+Stock vLLM only guards `/v1`, which leaves root routes such as
+`/invocations` (generates like `/v1/chat/completions`), `/tokenize` and
+`/reset_prefix_cache` open; `overlay/patch_auth_all_routes.py` makes the key
+guard every route except `/health` and `/metrics`.
 
 ```bash
 curl -s http://127.0.0.1:8888/v1/chat/completions \
@@ -532,7 +536,7 @@ that are now documented/enforced:
 | `IMAGE` | `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3` | public GHCR tag. Rebuilt when the overlay recipe stamp drifts (`BUILD=1` forces; `SKIP_BUILD=1` keeps GHCR). `SKIP_PULL=1` skips pull |
 | `GHCR_TOKEN` / `GHCR_USER` | *(unset)* | optional login if anonymous GHCR pull is rate-limited |
 | `PORT` | `8888` | OpenAI API on the head |
-| `VLLM_API_KEY` | *(unset)* | opt-in Bearer token for `/v1`. Empty = open API. `/health` stays keyless |
+| `VLLM_API_KEY` | *(unset)* | opt-in Bearer token for every route. Empty = open API. `/health` and `/metrics` stay keyless |
 | `ABLIT` | `0` (off) | opt-in. `1` = serve the abliterated variant as `<model>-Ablit` (tensors fetched on first use). See [Abliteration](#abliteration-ablit1) for the other `ABLIT_*` knobs |
 | `TP` / `NNODES` | `2` / `2` | do not change for this recipe |
 | `QUANTIZATION` | `exl3` | overlay method; never `marlin` |
